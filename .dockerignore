@@ -1,0 +1,23 @@
+# Build artifacts
+bin/
+coverage.out
+coverage.html
+
+# Local env (must not leak into image)
+.env
+
+# Git and IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Docs and plans
+docs/
+
+# Worktrees
+.worktrees/
+
+# Test/CI scratch
+*.tmp
+*.log

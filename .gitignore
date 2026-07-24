@@ -1,0 +1,20 @@
+
+# superpowers worktrees
+.worktrees/
+
+# test coverage artifacts (go test -coverprofile, go tool cover -html)
+coverage.out
+coverage.html
+
+# binaries — `make build` puts them under bin/, but a bare `go build ./cmd/...`
+# from the repo root also drops them here. Ignore both locations.
+bin/
+/migrate
+/testclient
+/server
+
+# Local env file (keep .env.example committed)
+.env
+
+# Claude Code
+.claude/

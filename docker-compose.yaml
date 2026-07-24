@@ -1,0 +1,102 @@
+# docker-compose.yaml — one-command local stack.
+#
+# All values fall back to safe local-dev defaults via ${VAR:-default}, so
+# `docker compose up` works zero-config. To override (production, real
+# vendor creds), either:
+#   1. cp .env.example .env  and edit values  (compose auto-loads .env), or
+#   2. export MESSAGE_SERVICE_* in your shell before `docker compose up`.
+#
+# Build context is the monorepo root (..) so go.mod replace directives
+# (../go-common, ../gid-service) resolve inside the build container.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_DB=${MESSAGE_SERVICE_DATABASE_DBNAME:-message_service}
+      - POSTGRES_USER=${MESSAGE_SERVICE_DATABASE_USER:-postgres}
+      - POSTGRES_PASSWORD=${MESSAGE_SERVICE_DATABASE_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MESSAGE_SERVICE_DATABASE_USER:-postgres}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  message-service:
+    build:
+      context: ..
+      dockerfile: message-service/Dockerfile
+    environment:
+      # Server
+      - MESSAGE_SERVICE_SERVER_GRPC_ADDR=:9000
+      - MESSAGE_SERVICE_SERVER_HTTP_ADDR=:8080
+      # Database (host/port pinned to compose service name; rest overridable)
+      - MESSAGE_SERVICE_DATABASE_HOST=postgres
+      - MESSAGE_SERVICE_DATABASE_PORT=5432
+      - MESSAGE_SERVICE_DATABASE_USER=${MESSAGE_SERVICE_DATABASE_USER:-postgres}
+      - MESSAGE_SERVICE_DATABASE_PASSWORD=${MESSAGE_SERVICE_DATABASE_PASSWORD:-postgres}
+      - MESSAGE_SERVICE_DATABASE_DBNAME=${MESSAGE_SERVICE_DATABASE_DBNAME:-message_service}
+      - MESSAGE_SERVICE_DATABASE_SSLMODE=${MESSAGE_SERVICE_DATABASE_SSLMODE:-disable}
+      # Redis
+      - MESSAGE_SERVICE_REDIS_ADDR=redis:6379
+      - MESSAGE_SERVICE_REDIS_PASSWORD=${MESSAGE_SERVICE_REDIS_PASSWORD:-}
+      # Idempotency (key prefix only — per-channel TTLs live under email/sms sections below)
+      - MESSAGE_SERVICE_IDEMPOTENCY_KEY_PREFIX=${MESSAGE_SERVICE_IDEMPOTENCY_KEY_PREFIX:-msg:idem}
+      # Logging
+      - MESSAGE_SERVICE_LOG_LEVEL=${MESSAGE_SERVICE_LOG_LEVEL:-info}
+      - MESSAGE_SERVICE_LOG_FORMAT=${MESSAGE_SERVICE_LOG_FORMAT:-json}
+      # Email — replace placeholders before sending real email
+      - MESSAGE_SERVICE_EMAIL_PERSISTENCE=${MESSAGE_SERVICE_EMAIL_PERSISTENCE:-true}
+      - MESSAGE_SERVICE_EMAIL_IDEMPOTENCY_TTL=${MESSAGE_SERVICE_EMAIL_IDEMPOTENCY_TTL:-5m}
+      - MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_NAME=default
+      - MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_VENDOR=${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_VENDOR:-aliyun}
+      - MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_HOST=${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_HOST:-smtp.example.com}
+      - MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_PORT=${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_PORT:-587}
+      - MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_USERNAME=${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_USERNAME:-replace-me}
+      - MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_PASSWORD=${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_PASSWORD:-replace-me}
+      - MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_FROM=${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_FROM:-noreply@example.com}
+      # SMS (Aliyun) — replace placeholders before sending real SMS
+      - MESSAGE_SERVICE_SMS_DEFAULT_COUNTRY=${MESSAGE_SERVICE_SMS_DEFAULT_COUNTRY:-CN}
+      - MESSAGE_SERVICE_SMS_PERSISTENCE=${MESSAGE_SERVICE_SMS_PERSISTENCE:-true}
+      - MESSAGE_SERVICE_SMS_IDEMPOTENCY_TTL=${MESSAGE_SERVICE_SMS_IDEMPOTENCY_TTL:-5m}
+      - MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_NAME=default
+      - MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_ACCESS_KEY_ID=${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_ACCESS_KEY_ID:-replace-me}
+      - MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_ACCESS_KEY_SECRET=${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_ACCESS_KEY_SECRET:-replace-me}
+      - MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_SIGN_NAME=${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_SIGN_NAME:-replace-me}
+      - MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_REGION_ID=${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_REGION_ID:-cn-hangzhou}
+      # Cron
+      - MESSAGE_SERVICE_CRON_TIMEZONE=${MESSAGE_SERVICE_CRON_TIMEZONE:-Asia/Shanghai}
+      - MESSAGE_SERVICE_CRON_OVERLAP_POLICY=${MESSAGE_SERVICE_CRON_OVERLAP_POLICY:-skip}
+      # Snowflake (module mode)
+      - MESSAGE_SERVICE_THIRD_PARTY_GID_MODE=${MESSAGE_SERVICE_THIRD_PARTY_GID_MODE:-module}
+      - MESSAGE_SERVICE_THIRD_PARTY_GID_GID_SNOWFLAKE_MACHINE_ID=${MESSAGE_SERVICE_THIRD_PARTY_GID_GID_SNOWFLAKE_MACHINE_ID:-1}
+      - MESSAGE_SERVICE_THIRD_PARTY_GID_GID_SNOWFLAKE_START_TIME=${MESSAGE_SERVICE_THIRD_PARTY_GID_GID_SNOWFLAKE_START_TIME:-2026-06-01T00:00:00Z}
+    ports:
+      - "9000:9000"
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,113 @@
+# config.docker.yaml — Docker 镜像内的配置文件。
+# 所有字段值都引用 MESSAGE_SERVICE_* 环境变量。
+# Dockerfile 构建时 COPY 本文件为容器内的 config.yaml。
+# 环境变量的实际值由 .env 文件提供（docker-compose 用 env_file 加载）。
+
+server:
+  grpc_addr: ${MESSAGE_SERVICE_SERVER_GRPC_ADDR}
+  http_addr: ${MESSAGE_SERVICE_SERVER_HTTP_ADDR}
+  max_recv_msg_size_bytes: 10485760  # 10 MB — raised from gRPC's 4MB default for inline attachment.content
+
+database:
+  host: ${MESSAGE_SERVICE_DATABASE_HOST}
+  port: ${MESSAGE_SERVICE_DATABASE_PORT}
+  user: ${MESSAGE_SERVICE_DATABASE_USER}
+  password: ${MESSAGE_SERVICE_DATABASE_PASSWORD}
+  dbname: ${MESSAGE_SERVICE_DATABASE_DBNAME}
+  sslmode: ${MESSAGE_SERVICE_DATABASE_SSLMODE}
+
+redis:
+  addr: ${MESSAGE_SERVICE_REDIS_ADDR}
+  password: ${MESSAGE_SERVICE_REDIS_PASSWORD}
+  db: 0
+
+log:
+  level: ${MESSAGE_SERVICE_LOG_LEVEL}
+  format: ${MESSAGE_SERVICE_LOG_FORMAT}
+
+email:
+  persistence: ${MESSAGE_SERVICE_EMAIL_PERSISTENCE}
+  idempotency_ttl: ${MESSAGE_SERVICE_EMAIL_IDEMPOTENCY_TTL}
+
+  accounts:
+    - name: ${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_NAME}
+      vendor: ${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_VENDOR}
+      host: ${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_HOST}
+      port: ${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_PORT}
+      username: ${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_USERNAME}
+      password: ${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_PASSWORD}
+      from: ${MESSAGE_SERVICE_EMAIL_ACCOUNTS_0_FROM}
+
+  attachment:
+    fetch_timeout: ${MESSAGE_SERVICE_EMAIL_ATTACHMENT_FETCH_TIMEOUT}
+    max_bytes: 10485760             # 10 MB
+    max_inline_bytes: 2097152       # 2 MB
+    max_total_inline_bytes: 5242880 # 5 MB
+
+sms:
+  default_country: ${MESSAGE_SERVICE_SMS_DEFAULT_COUNTRY}
+  persistence: ${MESSAGE_SERVICE_SMS_PERSISTENCE}
+  idempotency_ttl: ${MESSAGE_SERVICE_SMS_IDEMPOTENCY_TTL}
+  vendors:
+    aliyun:
+      accounts:
+        - name: ${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_NAME}
+          aliyun:
+            access_key_id: ${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_ACCESS_KEY_ID}
+            access_key_secret: ${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_ACCESS_KEY_SECRET}
+            sign_name: ${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_SIGN_NAME}
+            region_id: ${MESSAGE_SERVICE_SMS_VENDORS_ALIYUN_ACCOUNTS_0_REGION_ID}
+
+    # 取消注释并配置环境变量以启用对应 vendor
+    # tencent:
+    #   accounts:
+    #     - name: ${MESSAGE_SERVICE_SMS_VENDORS_TENCENT_ACCOUNTS_0_NAME}
+    #       tencent:
+    #         secret_id: ${MESSAGE_SERVICE_SMS_VENDORS_TENCENT_ACCOUNTS_0_SECRET_ID}
+    #         secret_key: ${MESSAGE_SERVICE_SMS_VENDORS_TENCENT_ACCOUNTS_0_SECRET_KEY}
+    #         sms_sdk_app_id: ${MESSAGE_SERVICE_SMS_VENDORS_TENCENT_ACCOUNTS_0_SMS_SDK_APP_ID}
+    #         sign_name: ${MESSAGE_SERVICE_SMS_VENDORS_TENCENT_ACCOUNTS_0_SIGN_NAME}
+    #         region: ${MESSAGE_SERVICE_SMS_VENDORS_TENCENT_ACCOUNTS_0_REGION}
+
+    # volcengine:
+    #   accounts:
+    #     - name: ${MESSAGE_SERVICE_SMS_VENDORS_VOLCENGINE_ACCOUNTS_0_NAME}
+    #       volcengine:
+    #         access_kid: ${MESSAGE_SERVICE_SMS_VENDORS_VOLCENGINE_ACCOUNTS_0_ACCESS_KID}
+    #         secret_key: ${MESSAGE_SERVICE_SMS_VENDORS_VOLCENGINE_ACCOUNTS_0_SECRET_KEY}
+    #         sms_account: ${MESSAGE_SERVICE_SMS_VENDORS_VOLCENGINE_ACCOUNTS_0_SMS_ACCOUNT}
+    #         sign: ${MESSAGE_SERVICE_SMS_VENDORS_VOLCENGINE_ACCOUNTS_0_SIGN}
+
+    # byteplus:
+    #   accounts:
+    #     - name: ${MESSAGE_SERVICE_SMS_VENDORS_BYTEPLUS_ACCOUNTS_0_NAME}
+    #       byteplus:
+    #         access_kid: ${MESSAGE_SERVICE_SMS_VENDORS_BYTEPLUS_ACCOUNTS_0_ACCESS_KID}
+    #         secret_key: ${MESSAGE_SERVICE_SMS_VENDORS_BYTEPLUS_ACCOUNTS_0_SECRET_KEY}
+    #         sms_account: ${MESSAGE_SERVICE_SMS_VENDORS_BYTEPLUS_ACCOUNTS_0_SMS_ACCOUNT}
+    #         sign: ${MESSAGE_SERVICE_SMS_VENDORS_BYTEPLUS_ACCOUNTS_0_SIGN}
+
+    # huawei:
+    #   accounts:
+    #     - name: ${MESSAGE_SERVICE_SMS_VENDORS_HUAWEI_ACCOUNTS_0_NAME}
+    #       huawei:
+    #         app_key: ${MESSAGE_SERVICE_SMS_VENDORS_HUAWEI_ACCOUNTS_0_APP_KEY}
+    #         app_secret: ${MESSAGE_SERVICE_SMS_VENDORS_HUAWEI_ACCOUNTS_0_APP_SECRET}
+    #         endpoint: ${MESSAGE_SERVICE_SMS_VENDORS_HUAWEI_ACCOUNTS_0_ENDPOINT}
+    #         region: ${MESSAGE_SERVICE_SMS_VENDORS_HUAWEI_ACCOUNTS_0_REGION}
+    #         sign: ${MESSAGE_SERVICE_SMS_VENDORS_HUAWEI_ACCOUNTS_0_SIGN}
+
+idempotency_key_prefix: ${MESSAGE_SERVICE_IDEMPOTENCY_KEY_PREFIX}
+# Per-channel TTLs live under email.idempotency_ttl / sms.idempotency_ttl above.
+
+cron:
+  timezone: ${MESSAGE_SERVICE_CRON_TIMEZONE}
+  overlap_policy: ${MESSAGE_SERVICE_CRON_OVERLAP_POLICY}
+
+third_party:
+  gid:
+    mode: ${MESSAGE_SERVICE_THIRD_PARTY_GID_MODE}
+    config:
+      snowflake:
+        machine_id: ${MESSAGE_SERVICE_THIRD_PARTY_GID_CONFIG_SNOWFLAKE_MACHINE_ID}
+        start_time: ${MESSAGE_SERVICE_THIRD_PARTY_GID_CONFIG_SNOWFLAKE_START_TIME}

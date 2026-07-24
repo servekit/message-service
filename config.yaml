@@ -1,0 +1,126 @@
+server:
+  grpc_addr: ":9000"
+  http_addr: ":8080"
+  max_recv_msg_size_bytes: 10485760  # 10 MB — gRPC server cap; raised from gRPC's 4MB default to allow inline attachment.content payloads
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: message_service
+  sslmode: disable
+
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
+
+log:
+  level: info
+  format: json
+
+email:
+  # Persistence controls whether send records are written to the DB.
+  # Set false to skip DB writes (sends only).
+  persistence: true
+  # idempotency_ttl is the Redis idempotency window for the email channel
+  # (time.ParseDuration format). Shared key prefix lives at top-level idempotency.key_prefix.
+  idempotency_ttl: 5m
+
+  accounts:
+    - name: default
+      vendor: aliyun               # required, one of aliyun/tencent/netease
+      host: smtp.example.com
+      port: 587
+      username: ""
+      password: ""
+      from: noreply@example.com
+
+  # Email-specific attachment policy. Defaults come from `default:` tags on
+  # AttachmentConfig — every field below can be omitted in production.
+  attachment:
+    fetch_timeout: 30s              # HTTP timeout for URL-sourced attachment fetch
+    max_bytes: 10485760             # 10 MB — hard cap per single attachment (url fetch or inline content)
+    max_inline_bytes: 2097152       # 2 MB — single attachment.content payload
+    max_total_inline_bytes: 5242880 # 5 MB — sum of all attachment.content in one request
+
+sms:
+  default_country: CN
+  # Persistence controls whether send records are written to the DB.
+  # Set false to skip DB writes (sends only).
+  persistence: true
+  # idempotency_ttl is the Redis idempotency window for the SMS channel
+  # (time.ParseDuration format). Shared key prefix lives at top-level idempotency.key_prefix.
+  idempotency_ttl: 5m
+  vendors:
+    aliyun:
+      accounts:
+        - name: default
+          aliyun:
+            access_key_id: ""
+            access_key_secret: ""
+            sign_name: ""
+            region_id: cn-hangzhou
+
+    # 取消注释并配置环境变量以启用对应 vendor
+    # tencent:
+    #   accounts:
+    #     - name: default
+    #       tencent:
+    #         secret_id: ${TENCENT_SECRET_ID}
+    #         secret_key: ${TENCENT_SECRET_KEY}
+    #         sms_sdk_app_id: "1400000000"
+    #         sign_name: ${TENCENT_SIGN_NAME}
+    #         region: ap-guangzhou
+
+    # volcengine:
+    #   accounts:
+    #     - name: default
+    #       volcengine:
+    #         access_kid: ${VOLC_AK_ID}
+    #         secret_key: ${VOLC_AK_SECRET}
+    #         sms_account: ${VOLC_SMS_ACCOUNT}
+    #         sign: ${VOLC_SIGN}
+
+    # byteplus:
+    #   accounts:
+    #     - name: default
+    #       byteplus:
+    #         access_kid: ${BP_AK_ID}
+    #         secret_key: ${BP_AK_SECRET}
+    #         sms_account: ${BP_SMS_ACCOUNT}
+    #         sign: ${BP_SIGN}
+
+    # huawei:
+    #   accounts:
+    #     - name: default
+    #       huawei:
+    #         app_key: ${HW_APP_KEY}
+    #         app_secret: ${HW_APP_SECRET}
+    #         endpoint: https://smsapi.cn-north-4.myhuaweicloud.com
+    #         region: cn-north-4
+    #         sign: ${HW_SIGN}
+
+  # routes:  # Optional. When absent, vendor+account must be specified in SendSMS requests.
+  #   - country: CN
+  #     targets:
+  #       - { vendor: aliyun, account: default }
+  #   - country: "*"
+  #     targets:
+  #       - { vendor: aliyun, account: default }
+
+idempotency_key_prefix: msg:idem   # Redis key namespace; change when sharing Redis across services.
+                                    # Per-channel TTLs live under email.idempotency_ttl / sms.idempotency_ttl.
+
+cron:
+  timezone: "Asia/Shanghai"
+  overlap_policy: "skip"
+
+third_party:
+  gid:
+    mode: module
+    config:
+      snowflake:
+        machine_id: 1
+        start_time: "2026-06-01T00:00:00Z"
