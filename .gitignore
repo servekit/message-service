@@ -13,8 +13,12 @@ bin/
 /testclient
 /server
 
-# Local env file (keep .env.example committed)
+# Local config / env (committed templates: config.example.yaml, .env.example)
+config.yaml
 .env
 
 # Claude Code
 .claude/
+
+# Local skill artifacts
+docs/superpowers
