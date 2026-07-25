@@ -13,21 +13,22 @@ COPY . .
 
 WORKDIR /src/message-service
 RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/message-service ./cmd/server
 
-# Runtime stage:alpine has a shell so entrypoint.sh can run migrate first.
+# Runtime stage.
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata \
     && adduser -D -u 10001 appuser
 
 WORKDIR /app
-COPY --from=builder /out/server                              ./server
-COPY --from=builder /out/migrate                             ./migrate
-COPY --from=builder /src/message-service/entrypoint.sh       ./entrypoint.sh
-COPY --from=builder /src/message-service/config.example.yaml  ./config.yaml
-RUN chmod +x entrypoint.sh server migrate
+COPY --from=builder /out/message-service                       ./message-service
+COPY --from=builder /src/message-service/config.example.yaml   ./config.yaml
+RUN chmod +x message-service
 
 USER appuser
 EXPOSE 19092 18082
-ENTRYPOINT ["./entrypoint.sh"]
+
+# Args pass through to the binary:
+#   docker run <image>            -> ./message-service         (start server)
+#   docker run <image> migrate    -> ./message-service migrate (run migrations)
+ENTRYPOINT ["./message-service"]

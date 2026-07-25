@@ -36,7 +36,7 @@
 - 使用 `gorm.io/cli` 做代码生成（参考 gorm-cli-development skill）
 - Model 定义在 `internal/store/models/`，生成代码输出到 `internal/store/generated/`
 - 数据库使用 PostgreSQL
-- 迁移工具：GORM AutoMigrate（`cmd/migrate/`），支持建表、新增字段和索引
+- 迁移工具：GORM AutoMigrate，入口为 `cmd/server` 的 `migrate` 子命令（`go run ./cmd/server migrate`），支持建表、新增字段和索引
 - **不使用外键约束（REFERENCES）**，关系完整性由应用层保证。只保留 UNIQUE 约束和索引
 - GORM 模型不定义 `foreignKey` 关联字段（如 `User User`），只用 ID 字段（如 `UserID int64`）
 - GORM 日志通过 dbx 内置 slog logger 输出，与 slog 统一，禁止 GORM 默认的 fmt 日志
@@ -153,7 +153,7 @@ go test -race -coverprofile=coverage.out ./...
 ```
 message-service/
 ├── api/proto/message/       # Protobuf 定义
-├── cmd/server/              # 启动入口（参考 user-service/cmd/server）
+├── cmd/server/              # 启动入口：serve（默认）+ migrate 子命令（单二进制）
 ├── gen/                     # protoc 生成代码
 ├── internal/
 │   ├── config/              # 配置结构体与加载
@@ -169,7 +169,6 @@ message-service/
 │   ├── module.go            # NewModule — in-process 使用
 │   ├── client.go            # NewClient — 远程 gRPC 客户端
 │   └── ptr/                 # 指针工具函数
-├── cmd/migrate/              # GORM AutoMigrate 入口（go run ./cmd/migrate/）
 ├── CLAUDE.md
 ├── Makefile
 ├── config.yaml

@@ -1,10 +1,7 @@
-// Package main runs message-service database migrations via GORM AutoMigrate.
 package main
 
 import (
 	"fmt"
-	"log/slog"
-	"os"
 
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/logging"
@@ -15,25 +12,25 @@ import (
 	"gorm.io/gorm"
 )
 
-func main() {
+// runMigrate loads config and applies the current schema via GORM AutoMigrate.
+// Operators (or CI) run this before bringing up the server, e.g.
+// `docker run <image> migrate` or `./message-service migrate`.
+func runMigrate() error {
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("load config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
-
 	logging.Setup(cfg.Log)
 
 	db, err := dbx.New(cfg.Database)
 	if err != nil {
-		slog.Error("init database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("init database: %w", err)
 	}
 
 	if err := runMigration(db); err != nil {
-		slog.Error("migrate failed", "error", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
 // runMigration applies the current schema via GORM AutoMigrate.
