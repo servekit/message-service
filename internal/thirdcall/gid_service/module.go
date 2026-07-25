@@ -13,10 +13,10 @@ type moduleGID struct {
 }
 
 // NewModule creates a GIDService backed by an in-process gid-service instance.
-// cfg is forwarded to gidservice.NewModuleFromConfig verbatim — boundary does
-// no field unpacking.
+// cfg is forwarded to gidservice.NewModule verbatim — boundary does no field
+// unpacking.
 func NewModule(cfg *gidconfig.Config) (*moduleGID, error) {
-	svc, err := gidservice.NewModuleFromConfig(cfg)
+	svc, err := gidservice.NewModule(cfg)
 	if err != nil {
 		return nil, err
 	}
