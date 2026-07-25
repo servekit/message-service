@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,4 +329,48 @@ func TestAttachmentConfig_Defaults(t *testing.T) {
 	cfg := &AttachmentConfig{FetchTimeout: "60s", MaxBytes: 5 * 1024 * 1024}
 	require.Equal(t, 60*time.Second, cfg.FetchTimeoutDuration())
 	require.Equal(t, int64(5*1024*1024), cfg.MaxBytes)
+}
+
+// loadEnvFile parses a dotenv file and sets each KEY=VALUE into the test
+// environment. Mirrors docker-compose .env semantics: blank lines and lines
+// starting with '#' are skipped, inline comments are NOT supported (the value
+// is everything after the first '='), and quotes are not stripped.
+func loadEnvFile(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "read env file: %s", path)
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		require.NotEqual(t, -1, idx, "malformed env line (no '='): %q", line)
+		key := strings.TrimSpace(line[:idx])
+		require.NotEmpty(t, key, "empty key in env line: %q", line)
+		t.Setenv(key, line[idx+1:])
+	}
+}
+
+// TestExampleConfigsAreLoadable guards that config.example.yaml + .env.example
+// stay self-consistent: loads the YAML with every ${VAR} resolved from
+// .env.example and asserts Load() + Validate() succeed with real (expanded)
+// values. Catches drift in either direction — a ${VAR} in the YAML with no
+// matching var in .env.example, or an env value that breaks parsing.
+func TestExampleConfigsAreLoadable(t *testing.T) {
+	root := filepath.Join("..", "..")
+	loadEnvFile(t, filepath.Join(root, ".env.example"))
+	t.Setenv("MESSAGE_SERVICE_CONFIG", filepath.Join(root, "config.example.yaml"))
+
+	cfg, err := Load()
+	require.NoError(t, err, "config.example.yaml + .env.example must load and validate")
+
+	// Spot-check that ${VAR} was actually expanded, not left literal.
+	require.Equal(t, ":9000", cfg.Server.GRPCAddr)
+	require.Equal(t, "postgres", cfg.Database.Host)
+	require.Equal(t, "message_service", cfg.Database.DBName)
+	require.Equal(t, true, cfg.Email.Persistence)
+	require.Equal(t, "module", cfg.ThirdParty.GID.Mode)
+	require.NotEqual(t, "${MESSAGE_SERVICE_DATABASE_PASSWORD}", cfg.Database.Password,
+		"env expansion must have replaced the placeholder")
 }

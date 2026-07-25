@@ -25,7 +25,7 @@ WORKDIR /app
 COPY --from=builder /out/server                              ./server
 COPY --from=builder /out/migrate                             ./migrate
 COPY --from=builder /src/message-service/entrypoint.sh       ./entrypoint.sh
-COPY --from=builder /src/message-service/config.docker.yaml  ./config.yaml
+COPY --from=builder /src/message-service/config.example.yaml  ./config.yaml
 RUN chmod +x entrypoint.sh server migrate
 
 USER appuser

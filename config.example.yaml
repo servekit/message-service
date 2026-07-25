@@ -1,7 +1,11 @@
-# config.docker.yaml — Docker 镜像内的配置文件。
-# 所有字段值都引用 MESSAGE_SERVICE_* 环境变量。
-# Dockerfile 构建时 COPY 本文件为容器内的 config.yaml。
-# 环境变量的实际值由 .env 文件提供（docker-compose 用 env_file 加载）。
+# config.example.yaml — message-service configuration template.
+#
+# All values are ${VAR} references resolved from the environment at load time
+# (see pkg/config/config.go -> configx.WithExpandEnv). For Docker, the
+# Dockerfile COPYs this file into the image as config.yaml and entrypoint.sh
+# runs migrate + server; values come from .env (see .env.example) or the
+# MESSAGE_SERVICE_* defaults baked into docker-compose.yaml. For local dev,
+# copy to config.yaml and edit directly.
 
 server:
   grpc_addr: ${MESSAGE_SERVICE_SERVER_GRPC_ADDR}
