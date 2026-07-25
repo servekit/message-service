@@ -29,5 +29,5 @@ COPY --from=builder /src/message-service/config.example.yaml  ./config.yaml
 RUN chmod +x entrypoint.sh server migrate
 
 USER appuser
-EXPOSE 9000 8080
+EXPOSE 19092 18082
 ENTRYPOINT ["./entrypoint.sh"]

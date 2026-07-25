@@ -110,8 +110,8 @@ type RouteTarget struct {
 
 // ServerConfig holds gRPC and HTTP server addresses plus transport limits.
 type ServerConfig struct {
-	GRPCAddr string `default:":9000"`
-	HTTPAddr string `default:":8080"`
+	GRPCAddr string `default:":19092"`
+	HTTPAddr string `default:":18082"`
 	// MaxRecvMsgSizeBytes is the gRPC server MaxRecvMsgSize. Raised from
 	// gRPC's 4MB default to accommodate inline attachment.content payloads.
 	MaxRecvMsgSizeBytes int `default:"10485760" mapstructure:"max_recv_msg_size_bytes"`
@@ -128,7 +128,7 @@ type ThirdPartyConfig struct {
 // treat an empty value.
 type RemoteServiceConfig[T any] struct {
 	Mode   string // "module" | "grpc"
-	Target string // gRPC addr, e.g. "localhost:9000" (grpc mode only)
+	Target string // gRPC addr, e.g. "localhost:19091" (grpc mode only)
 	Config T      // module-mode config
 }
 

@@ -63,8 +63,8 @@ third_party:
 `)
 	chdir(t, dir)
 
-	setenv(t, "TEST_MS_GRPC_ADDR", ":9000")
-	setenv(t, "TEST_MS_HTTP_ADDR", ":8080")
+	setenv(t, "TEST_MS_GRPC_ADDR", ":19092")
+	setenv(t, "TEST_MS_HTTP_ADDR", ":18082")
 	setenv(t, "TEST_MS_DB_HOST", "postgres")
 	setenv(t, "TEST_MS_DB_PORT", "5432")
 	setenv(t, "TEST_MS_DB_USER", "postgres")
@@ -81,8 +81,8 @@ third_party:
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, ":9000", cfg.Server.GRPCAddr)
-	require.Equal(t, ":8080", cfg.Server.HTTPAddr)
+	require.Equal(t, ":19092", cfg.Server.GRPCAddr)
+	require.Equal(t, ":18082", cfg.Server.HTTPAddr)
 	require.Equal(t, "postgres", cfg.Database.Host)
 	require.Equal(t, "secret", cfg.Database.Password)
 	require.Equal(t, "module", cfg.ThirdParty.GID.Mode)
@@ -95,7 +95,7 @@ func TestLoad_NoExpandEnv_KeepsLiteral(t *testing.T) {
 	dir := t.TempDir()
 	writeTestConfig(t, dir, `
 server:
-  grpc_addr: ":9000"
+  grpc_addr: ":19092"
 database:
   host: localhost
   port: 5432
@@ -115,7 +115,7 @@ third_party:
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, ":9000", cfg.Server.GRPCAddr)
+	require.Equal(t, ":19092", cfg.Server.GRPCAddr)
 	require.Equal(t, "localhost", cfg.Database.Host)
 }
 
@@ -125,7 +125,7 @@ func TestLoad_PersistenceOmitted_DefaultsTrue(t *testing.T) {
 	dir := t.TempDir()
 	writeTestConfig(t, dir, `
 server:
-  grpc_addr: ":9000"
+  grpc_addr: ":19092"
 database:
   host: localhost
   port: 5432
@@ -155,7 +155,7 @@ func TestLoad_PersistenceExplicitFalse(t *testing.T) {
 	dir := t.TempDir()
 	writeTestConfig(t, dir, `
 server:
-  grpc_addr: ":9000"
+  grpc_addr: ":19092"
 database:
   host: localhost
   port: 5432
@@ -220,7 +220,7 @@ func TestLoad_IdempotencyKeyPrefix_Default(t *testing.T) {
 	dir := t.TempDir()
 	writeTestConfig(t, dir, `
 server:
-  grpc_addr: ":9000"
+  grpc_addr: ":19092"
 database:
   host: localhost
   port: 5432
@@ -246,7 +246,7 @@ third_party:
 	dir2 := t.TempDir()
 	writeTestConfig(t, dir2, `
 server:
-  grpc_addr: ":9000"
+  grpc_addr: ":19092"
 third_party:
   gid:
     mode: module
@@ -269,7 +269,7 @@ func TestLoad_RedisSection(t *testing.T) {
 	dir := t.TempDir()
 	writeTestConfig(t, dir, `
 server:
-  grpc_addr: ":9000"
+  grpc_addr: ":19092"
 database:
   host: localhost
   port: 5432
@@ -366,7 +366,7 @@ func TestExampleConfigsAreLoadable(t *testing.T) {
 	require.NoError(t, err, "config.example.yaml + .env.example must load and validate")
 
 	// Spot-check that ${VAR} was actually expanded, not left literal.
-	require.Equal(t, ":9000", cfg.Server.GRPCAddr)
+	require.Equal(t, ":19092", cfg.Server.GRPCAddr)
 	require.Equal(t, "postgres", cfg.Database.Host)
 	require.Equal(t, "message_service", cfg.Database.DBName)
 	require.Equal(t, true, cfg.Email.Persistence)

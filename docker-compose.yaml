@@ -45,8 +45,8 @@ services:
       dockerfile: message-service/Dockerfile
     environment:
       # Server
-      - MESSAGE_SERVICE_SERVER_GRPC_ADDR=:9000
-      - MESSAGE_SERVICE_SERVER_HTTP_ADDR=:8080
+      - MESSAGE_SERVICE_SERVER_GRPC_ADDR=:19092
+      - MESSAGE_SERVICE_SERVER_HTTP_ADDR=:18082
       # Database (host/port pinned to compose service name; rest overridable)
       - MESSAGE_SERVICE_DATABASE_HOST=postgres
       - MESSAGE_SERVICE_DATABASE_PORT=5432
@@ -89,8 +89,8 @@ services:
       - MESSAGE_SERVICE_THIRD_PARTY_GID_CONFIG_SNOWFLAKE_MACHINE_ID=${MESSAGE_SERVICE_THIRD_PARTY_GID_CONFIG_SNOWFLAKE_MACHINE_ID:-1}
       - MESSAGE_SERVICE_THIRD_PARTY_GID_CONFIG_SNOWFLAKE_START_TIME=${MESSAGE_SERVICE_THIRD_PARTY_GID_CONFIG_SNOWFLAKE_START_TIME:-2026-06-01T00:00:00Z}
     ports:
-      - "9000:9000"
-      - "8080:8080"
+      - "19092:19092"
+      - "18082:18082"
     depends_on:
       postgres:
         condition: service_healthy

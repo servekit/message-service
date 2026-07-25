@@ -4,7 +4,7 @@
 
 支持三种使用方式(与 user-service 一致):
 
-- **`Server`**(`pkg/server.go`)—— 独立微服务部署,gRPC server 监听 `:9000`,grpc-gateway 监听 `:8080`
+- **`Server`**(`pkg/server.go`)—— 独立微服务部署,gRPC server 监听 `:19092`,grpc-gateway 监听 `:18082`
 - **`Module`**(`pkg/module.go`)—— in-process 使用,父服务直接 import,无网络开销,注入已有 DB/Redis 连接
 - **`Client`**(`pkg/client.go`)—— 远程 gRPC 客户端,embed `pb.MessageServiceClient`,所有 RPC 方法直接可用
 
@@ -140,7 +140,7 @@ import msgsrv "message-service/pkg"
 srv, err := msgsrv.NewServer(cfg, msgsrv.WithServiceOptions(opts...))
 if err != nil { return err }
 defer srv.Stop()
-return srv.Start()  // blocks; listens :9000 + :8080
+return srv.Start()  // blocks; listens :19092 + :18082
 ```
 
 ### 2. Module — in-process(无网络开销)
@@ -171,7 +171,7 @@ resp, err := handler.SendEmail(ctx, &pb.SendEmailRequest{...})
 ```go
 import msgsrv "message-service/pkg"
 
-client, err := msgsrv.NewClient("dns:///message-service:9000",
+client, err := msgsrv.NewClient("dns:///message-service:19092",
     grpc.WithTransportCredentials(insecure.NewCredentials()),  // 或 mTLS
 )
 if err != nil { return err }

@@ -48,9 +48,9 @@ all: fmt vet lint test
 ## docker-up: Build images and start postgres + message-service (waits for HTTP gateway)
 docker-up:
 	docker compose up --build -d
-	@echo "waiting for HTTP gateway on :8080..."
+	@echo "waiting for HTTP gateway on :18082..."
 	@for i in $$(seq 1 60); do \
-		curl -sf -o /dev/null http://localhost:8080/v1/emails && echo "ready (took $${i}s)" && exit 0; \
+		curl -sf -o /dev/null http://localhost:18082/v1/emails && echo "ready (took $${i}s)" && exit 0; \
 		sleep 1; \
 	done; \
 	echo "timeout waiting for service"; docker compose logs --tail=30 message-service; exit 1
