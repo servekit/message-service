@@ -19,6 +19,8 @@ import (
 
 	pkg "github.com/servekit/message-service/pkg"
 	"github.com/servekit/message-service/pkg/config"
+
+	"github.com/servekit/message-service/internal/version"
 )
 
 func main() {
@@ -52,6 +54,7 @@ func runServer() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	logging.Setup(cfg.Log)
+	slog.Info("starting", "service", "message-service", "version", version.Get().String())
 
 	srv, err := pkg.NewServer(cfg)
 	if err != nil {

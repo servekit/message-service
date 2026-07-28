@@ -4,6 +4,7 @@ package message.v1;
 
 import "buf/validate/validate.proto";
 import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
 
 // MessageStatus represents the delivery status of a message.
 enum MessageStatus {
@@ -113,7 +114,26 @@ enum SortDirection {
 //
 // Idempotency: orthogonal to persistence. When idempotency_key is set, Redis
 // dedupes per (sender_id, key); see SendEmail/SendSMS for the exact contract.
+// Pong is the health-check response — only public, non-sensitive info
+// (service name, version, git/build info, timestamps). Never include internal
+// addresses, IPs, env vars, secrets, or dependency topology here.
+message Pong {
+  string service = 1;       // service name, e.g. "message-service"
+  string version = 2;       // semantic version (ldflags; "dev" by default)
+  string git_commit = 3;    // short commit hash (ldflags or VCS-embedded)
+  string git_branch = 4;    // git branch (ldflags)
+  string build_time = 5;    // build time, RFC3339 UTC (ldflags)
+  string go_version = 6;    // Go toolchain version (runtime, not injected)
+  string status = 7;        // "SERVING" when serving normally
+  int64 now = 8;            // server time, Unix millis
+  int64 started_at = 9;     // process start time, Unix millis (uptime)
+}
+
 service MessageService {
+  rpc Ping(google.protobuf.Empty) returns (Pong) {
+    option (google.api.http) = { get: "/ping" };
+  }
+
   // SendEmail sends an email via the configured vendor/account, or the default
   // fallback chain when both vendor + account are unset.
   //

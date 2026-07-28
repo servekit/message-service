@@ -11,6 +11,7 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -440,6 +441,128 @@ func (SortDirection) EnumDescriptor() ([]byte, []int) {
 	return file_message_v1_message_proto_rawDescGZIP(), []int{6}
 }
 
+// MessageService handles sending, recording, and querying messages.
+//
+// Channel split: emails and SMSs have parallel RPC families — Send, Get,
+// List (offset), ListByCursor, and Stats — plus three cross-channel helpers
+// (ListSMSRegions / ListSMSSenders / ListEmailSenders) for UI filter dropdowns.
+//
+// Persistence: when persistence.{email,sms}.enabled = false, query RPCs return
+// ErrPersistenceDisabled (503) — send RPCs still work (records skipped).
+//
+// Idempotency: orthogonal to persistence. When idempotency_key is set, Redis
+// dedupes per (sender_id, key); see SendEmail/SendSMS for the exact contract.
+// Pong is the health-check response — only public, non-sensitive info
+// (service name, version, git/build info, timestamps). Never include internal
+// addresses, IPs, env vars, secrets, or dependency topology here.
+type Pong struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Service       string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`                       // service name, e.g. "message-service"
+	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                       // semantic version (ldflags; "dev" by default)
+	GitCommit     string                 `protobuf:"bytes,3,opt,name=git_commit,json=gitCommit,proto3" json:"git_commit,omitempty"`  // short commit hash (ldflags or VCS-embedded)
+	GitBranch     string                 `protobuf:"bytes,4,opt,name=git_branch,json=gitBranch,proto3" json:"git_branch,omitempty"`  // git branch (ldflags)
+	BuildTime     string                 `protobuf:"bytes,5,opt,name=build_time,json=buildTime,proto3" json:"build_time,omitempty"`  // build time, RFC3339 UTC (ldflags)
+	GoVersion     string                 `protobuf:"bytes,6,opt,name=go_version,json=goVersion,proto3" json:"go_version,omitempty"`  // Go toolchain version (runtime, not injected)
+	Status        string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`                         // "SERVING" when serving normally
+	Now           int64                  `protobuf:"varint,8,opt,name=now,proto3" json:"now,omitempty"`                              // server time, Unix millis
+	StartedAt     int64                  `protobuf:"varint,9,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"` // process start time, Unix millis (uptime)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Pong) Reset() {
+	*x = Pong{}
+	mi := &file_message_v1_message_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Pong) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Pong) ProtoMessage() {}
+
+func (x *Pong) ProtoReflect() protoreflect.Message {
+	mi := &file_message_v1_message_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Pong.ProtoReflect.Descriptor instead.
+func (*Pong) Descriptor() ([]byte, []int) {
+	return file_message_v1_message_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *Pong) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *Pong) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *Pong) GetGitCommit() string {
+	if x != nil {
+		return x.GitCommit
+	}
+	return ""
+}
+
+func (x *Pong) GetGitBranch() string {
+	if x != nil {
+		return x.GitBranch
+	}
+	return ""
+}
+
+func (x *Pong) GetBuildTime() string {
+	if x != nil {
+		return x.BuildTime
+	}
+	return ""
+}
+
+func (x *Pong) GetGoVersion() string {
+	if x != nil {
+		return x.GoVersion
+	}
+	return ""
+}
+
+func (x *Pong) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *Pong) GetNow() int64 {
+	if x != nil {
+		return x.Now
+	}
+	return 0
+}
+
+func (x *Pong) GetStartedAt() int64 {
+	if x != nil {
+		return x.StartedAt
+	}
+	return 0
+}
+
 // SendEmailRequest is the request to send an email.
 type SendEmailRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
@@ -482,7 +605,7 @@ type SendEmailRequest struct {
 
 func (x *SendEmailRequest) Reset() {
 	*x = SendEmailRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[0]
+	mi := &file_message_v1_message_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -494,7 +617,7 @@ func (x *SendEmailRequest) String() string {
 func (*SendEmailRequest) ProtoMessage() {}
 
 func (x *SendEmailRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[0]
+	mi := &file_message_v1_message_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -507,7 +630,7 @@ func (x *SendEmailRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendEmailRequest.ProtoReflect.Descriptor instead.
 func (*SendEmailRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{0}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *SendEmailRequest) GetTo() []*EmailAddress {
@@ -636,7 +759,7 @@ type EmailAddress struct {
 
 func (x *EmailAddress) Reset() {
 	*x = EmailAddress{}
-	mi := &file_message_v1_message_proto_msgTypes[1]
+	mi := &file_message_v1_message_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -648,7 +771,7 @@ func (x *EmailAddress) String() string {
 func (*EmailAddress) ProtoMessage() {}
 
 func (x *EmailAddress) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[1]
+	mi := &file_message_v1_message_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -661,7 +784,7 @@ func (x *EmailAddress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmailAddress.ProtoReflect.Descriptor instead.
 func (*EmailAddress) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{1}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *EmailAddress) GetEmail() string {
@@ -716,7 +839,7 @@ type EmailAttachment struct {
 
 func (x *EmailAttachment) Reset() {
 	*x = EmailAttachment{}
-	mi := &file_message_v1_message_proto_msgTypes[2]
+	mi := &file_message_v1_message_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -728,7 +851,7 @@ func (x *EmailAttachment) String() string {
 func (*EmailAttachment) ProtoMessage() {}
 
 func (x *EmailAttachment) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[2]
+	mi := &file_message_v1_message_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -741,7 +864,7 @@ func (x *EmailAttachment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmailAttachment.ProtoReflect.Descriptor instead.
 func (*EmailAttachment) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{2}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *EmailAttachment) GetFilename() string {
@@ -831,7 +954,7 @@ type SendSMSRequest struct {
 
 func (x *SendSMSRequest) Reset() {
 	*x = SendSMSRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[3]
+	mi := &file_message_v1_message_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -843,7 +966,7 @@ func (x *SendSMSRequest) String() string {
 func (*SendSMSRequest) ProtoMessage() {}
 
 func (x *SendSMSRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[3]
+	mi := &file_message_v1_message_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -856,7 +979,7 @@ func (x *SendSMSRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendSMSRequest.ProtoReflect.Descriptor instead.
 func (*SendSMSRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{3}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SendSMSRequest) GetRegionCode() string {
@@ -954,7 +1077,7 @@ type SendResponse struct {
 
 func (x *SendResponse) Reset() {
 	*x = SendResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[4]
+	mi := &file_message_v1_message_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -966,7 +1089,7 @@ func (x *SendResponse) String() string {
 func (*SendResponse) ProtoMessage() {}
 
 func (x *SendResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[4]
+	mi := &file_message_v1_message_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -979,7 +1102,7 @@ func (x *SendResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendResponse.ProtoReflect.Descriptor instead.
 func (*SendResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{4}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SendResponse) GetId() int64 {
@@ -1047,7 +1170,7 @@ type GetEmailRequest struct {
 
 func (x *GetEmailRequest) Reset() {
 	*x = GetEmailRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[5]
+	mi := &file_message_v1_message_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1059,7 +1182,7 @@ func (x *GetEmailRequest) String() string {
 func (*GetEmailRequest) ProtoMessage() {}
 
 func (x *GetEmailRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[5]
+	mi := &file_message_v1_message_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1072,7 +1195,7 @@ func (x *GetEmailRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetEmailRequest.ProtoReflect.Descriptor instead.
 func (*GetEmailRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{5}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetEmailRequest) GetId() int64 {
@@ -1092,7 +1215,7 @@ type GetSMSRequest struct {
 
 func (x *GetSMSRequest) Reset() {
 	*x = GetSMSRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[6]
+	mi := &file_message_v1_message_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1227,7 @@ func (x *GetSMSRequest) String() string {
 func (*GetSMSRequest) ProtoMessage() {}
 
 func (x *GetSMSRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[6]
+	mi := &file_message_v1_message_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1240,7 @@ func (x *GetSMSRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSMSRequest.ProtoReflect.Descriptor instead.
 func (*GetSMSRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{6}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetSMSRequest) GetId() int64 {
@@ -1162,7 +1285,7 @@ type EmailRecord struct {
 
 func (x *EmailRecord) Reset() {
 	*x = EmailRecord{}
-	mi := &file_message_v1_message_proto_msgTypes[7]
+	mi := &file_message_v1_message_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1174,7 +1297,7 @@ func (x *EmailRecord) String() string {
 func (*EmailRecord) ProtoMessage() {}
 
 func (x *EmailRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[7]
+	mi := &file_message_v1_message_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1187,7 +1310,7 @@ func (x *EmailRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmailRecord.ProtoReflect.Descriptor instead.
 func (*EmailRecord) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{7}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *EmailRecord) GetId() int64 {
@@ -1363,7 +1486,7 @@ type SMSRecord struct {
 
 func (x *SMSRecord) Reset() {
 	*x = SMSRecord{}
-	mi := &file_message_v1_message_proto_msgTypes[8]
+	mi := &file_message_v1_message_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1375,7 +1498,7 @@ func (x *SMSRecord) String() string {
 func (*SMSRecord) ProtoMessage() {}
 
 func (x *SMSRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[8]
+	mi := &file_message_v1_message_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1388,7 +1511,7 @@ func (x *SMSRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SMSRecord.ProtoReflect.Descriptor instead.
 func (*SMSRecord) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{8}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SMSRecord) GetId() int64 {
@@ -1526,7 +1649,7 @@ type ListEmailsRequest struct {
 
 func (x *ListEmailsRequest) Reset() {
 	*x = ListEmailsRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[9]
+	mi := &file_message_v1_message_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1538,7 +1661,7 @@ func (x *ListEmailsRequest) String() string {
 func (*ListEmailsRequest) ProtoMessage() {}
 
 func (x *ListEmailsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[9]
+	mi := &file_message_v1_message_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1551,7 +1674,7 @@ func (x *ListEmailsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEmailsRequest.ProtoReflect.Descriptor instead.
 func (*ListEmailsRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{9}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListEmailsRequest) GetVendor() EmailVendor {
@@ -1644,7 +1767,7 @@ type ListEmailsResponse struct {
 
 func (x *ListEmailsResponse) Reset() {
 	*x = ListEmailsResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[10]
+	mi := &file_message_v1_message_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1656,7 +1779,7 @@ func (x *ListEmailsResponse) String() string {
 func (*ListEmailsResponse) ProtoMessage() {}
 
 func (x *ListEmailsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[10]
+	mi := &file_message_v1_message_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1669,7 +1792,7 @@ func (x *ListEmailsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEmailsResponse.ProtoReflect.Descriptor instead.
 func (*ListEmailsResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{10}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListEmailsResponse) GetRecords() []*EmailRecord {
@@ -1724,7 +1847,7 @@ type ListSMSRequest struct {
 
 func (x *ListSMSRequest) Reset() {
 	*x = ListSMSRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[11]
+	mi := &file_message_v1_message_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1736,7 +1859,7 @@ func (x *ListSMSRequest) String() string {
 func (*ListSMSRequest) ProtoMessage() {}
 
 func (x *ListSMSRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[11]
+	mi := &file_message_v1_message_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1749,7 +1872,7 @@ func (x *ListSMSRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSRequest.ProtoReflect.Descriptor instead.
 func (*ListSMSRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{11}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListSMSRequest) GetVendor() SmsVendor {
@@ -1849,7 +1972,7 @@ type ListSMSResponse struct {
 
 func (x *ListSMSResponse) Reset() {
 	*x = ListSMSResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[12]
+	mi := &file_message_v1_message_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1861,7 +1984,7 @@ func (x *ListSMSResponse) String() string {
 func (*ListSMSResponse) ProtoMessage() {}
 
 func (x *ListSMSResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[12]
+	mi := &file_message_v1_message_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1874,7 +1997,7 @@ func (x *ListSMSResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSResponse.ProtoReflect.Descriptor instead.
 func (*ListSMSResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{12}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListSMSResponse) GetRecords() []*SMSRecord {
@@ -1934,7 +2057,7 @@ type ListEmailsByCursorRequest struct {
 
 func (x *ListEmailsByCursorRequest) Reset() {
 	*x = ListEmailsByCursorRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[13]
+	mi := &file_message_v1_message_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1946,7 +2069,7 @@ func (x *ListEmailsByCursorRequest) String() string {
 func (*ListEmailsByCursorRequest) ProtoMessage() {}
 
 func (x *ListEmailsByCursorRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[13]
+	mi := &file_message_v1_message_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1959,7 +2082,7 @@ func (x *ListEmailsByCursorRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEmailsByCursorRequest.ProtoReflect.Descriptor instead.
 func (*ListEmailsByCursorRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{13}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListEmailsByCursorRequest) GetVendor() EmailVendor {
@@ -2060,7 +2183,7 @@ type ListEmailsByCursorResponse struct {
 
 func (x *ListEmailsByCursorResponse) Reset() {
 	*x = ListEmailsByCursorResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[14]
+	mi := &file_message_v1_message_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2072,7 +2195,7 @@ func (x *ListEmailsByCursorResponse) String() string {
 func (*ListEmailsByCursorResponse) ProtoMessage() {}
 
 func (x *ListEmailsByCursorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[14]
+	mi := &file_message_v1_message_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2085,7 +2208,7 @@ func (x *ListEmailsByCursorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEmailsByCursorResponse.ProtoReflect.Descriptor instead.
 func (*ListEmailsByCursorResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{14}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListEmailsByCursorResponse) GetRecords() []*EmailRecord {
@@ -2134,7 +2257,7 @@ type ListSMSByCursorRequest struct {
 
 func (x *ListSMSByCursorRequest) Reset() {
 	*x = ListSMSByCursorRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[15]
+	mi := &file_message_v1_message_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2146,7 +2269,7 @@ func (x *ListSMSByCursorRequest) String() string {
 func (*ListSMSByCursorRequest) ProtoMessage() {}
 
 func (x *ListSMSByCursorRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[15]
+	mi := &file_message_v1_message_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2159,7 +2282,7 @@ func (x *ListSMSByCursorRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSByCursorRequest.ProtoReflect.Descriptor instead.
 func (*ListSMSByCursorRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{15}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListSMSByCursorRequest) GetVendor() SmsVendor {
@@ -2264,7 +2387,7 @@ type ListSMSByCursorResponse struct {
 
 func (x *ListSMSByCursorResponse) Reset() {
 	*x = ListSMSByCursorResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[16]
+	mi := &file_message_v1_message_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2276,7 +2399,7 @@ func (x *ListSMSByCursorResponse) String() string {
 func (*ListSMSByCursorResponse) ProtoMessage() {}
 
 func (x *ListSMSByCursorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[16]
+	mi := &file_message_v1_message_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2289,7 +2412,7 @@ func (x *ListSMSByCursorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSByCursorResponse.ProtoReflect.Descriptor instead.
 func (*ListSMSByCursorResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{16}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ListSMSByCursorResponse) GetRecords() []*SMSRecord {
@@ -2326,7 +2449,7 @@ type GetEmailStatsRequest struct {
 
 func (x *GetEmailStatsRequest) Reset() {
 	*x = GetEmailStatsRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[17]
+	mi := &file_message_v1_message_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2338,7 +2461,7 @@ func (x *GetEmailStatsRequest) String() string {
 func (*GetEmailStatsRequest) ProtoMessage() {}
 
 func (x *GetEmailStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[17]
+	mi := &file_message_v1_message_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2351,7 +2474,7 @@ func (x *GetEmailStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetEmailStatsRequest.ProtoReflect.Descriptor instead.
 func (*GetEmailStatsRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{17}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetEmailStatsRequest) GetVendor() EmailVendor {
@@ -2395,7 +2518,7 @@ type GetSMSStatsRequest struct {
 
 func (x *GetSMSStatsRequest) Reset() {
 	*x = GetSMSStatsRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[18]
+	mi := &file_message_v1_message_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2407,7 +2530,7 @@ func (x *GetSMSStatsRequest) String() string {
 func (*GetSMSStatsRequest) ProtoMessage() {}
 
 func (x *GetSMSStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[18]
+	mi := &file_message_v1_message_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2420,7 +2543,7 @@ func (x *GetSMSStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSMSStatsRequest.ProtoReflect.Descriptor instead.
 func (*GetSMSStatsRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{18}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GetSMSStatsRequest) GetVendor() SmsVendor {
@@ -2466,7 +2589,7 @@ type EmailStatsResponse struct {
 
 func (x *EmailStatsResponse) Reset() {
 	*x = EmailStatsResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[19]
+	mi := &file_message_v1_message_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2478,7 +2601,7 @@ func (x *EmailStatsResponse) String() string {
 func (*EmailStatsResponse) ProtoMessage() {}
 
 func (x *EmailStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[19]
+	mi := &file_message_v1_message_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2491,7 +2614,7 @@ func (x *EmailStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmailStatsResponse.ProtoReflect.Descriptor instead.
 func (*EmailStatsResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{19}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *EmailStatsResponse) GetTotal() int64 {
@@ -2544,7 +2667,7 @@ type SMSStatsResponse struct {
 
 func (x *SMSStatsResponse) Reset() {
 	*x = SMSStatsResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[20]
+	mi := &file_message_v1_message_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2556,7 +2679,7 @@ func (x *SMSStatsResponse) String() string {
 func (*SMSStatsResponse) ProtoMessage() {}
 
 func (x *SMSStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[20]
+	mi := &file_message_v1_message_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2569,7 +2692,7 @@ func (x *SMSStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SMSStatsResponse.ProtoReflect.Descriptor instead.
 func (*SMSStatsResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{20}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SMSStatsResponse) GetTotal() int64 {
@@ -2620,7 +2743,7 @@ type EmailVendorStats struct {
 
 func (x *EmailVendorStats) Reset() {
 	*x = EmailVendorStats{}
-	mi := &file_message_v1_message_proto_msgTypes[21]
+	mi := &file_message_v1_message_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2632,7 +2755,7 @@ func (x *EmailVendorStats) String() string {
 func (*EmailVendorStats) ProtoMessage() {}
 
 func (x *EmailVendorStats) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[21]
+	mi := &file_message_v1_message_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2645,7 +2768,7 @@ func (x *EmailVendorStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmailVendorStats.ProtoReflect.Descriptor instead.
 func (*EmailVendorStats) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{21}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *EmailVendorStats) GetVendor() EmailVendor {
@@ -2689,7 +2812,7 @@ type SmsVendorStats struct {
 
 func (x *SmsVendorStats) Reset() {
 	*x = SmsVendorStats{}
-	mi := &file_message_v1_message_proto_msgTypes[22]
+	mi := &file_message_v1_message_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2701,7 +2824,7 @@ func (x *SmsVendorStats) String() string {
 func (*SmsVendorStats) ProtoMessage() {}
 
 func (x *SmsVendorStats) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[22]
+	mi := &file_message_v1_message_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2714,7 +2837,7 @@ func (x *SmsVendorStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SmsVendorStats.ProtoReflect.Descriptor instead.
 func (*SmsVendorStats) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{22}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *SmsVendorStats) GetVendor() SmsVendor {
@@ -2755,7 +2878,7 @@ type ListSMSRegionsRequest struct {
 
 func (x *ListSMSRegionsRequest) Reset() {
 	*x = ListSMSRegionsRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[23]
+	mi := &file_message_v1_message_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2767,7 +2890,7 @@ func (x *ListSMSRegionsRequest) String() string {
 func (*ListSMSRegionsRequest) ProtoMessage() {}
 
 func (x *ListSMSRegionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[23]
+	mi := &file_message_v1_message_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2780,7 +2903,7 @@ func (x *ListSMSRegionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSRegionsRequest.ProtoReflect.Descriptor instead.
 func (*ListSMSRegionsRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{23}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{24}
 }
 
 type ListSMSRegionsResponse struct {
@@ -2792,7 +2915,7 @@ type ListSMSRegionsResponse struct {
 
 func (x *ListSMSRegionsResponse) Reset() {
 	*x = ListSMSRegionsResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[24]
+	mi := &file_message_v1_message_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2804,7 +2927,7 @@ func (x *ListSMSRegionsResponse) String() string {
 func (*ListSMSRegionsResponse) ProtoMessage() {}
 
 func (x *ListSMSRegionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[24]
+	mi := &file_message_v1_message_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2817,7 +2940,7 @@ func (x *ListSMSRegionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSRegionsResponse.ProtoReflect.Descriptor instead.
 func (*ListSMSRegionsResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{24}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ListSMSRegionsResponse) GetRegionCodes() []string {
@@ -2836,7 +2959,7 @@ type ListSMSSendersRequest struct {
 
 func (x *ListSMSSendersRequest) Reset() {
 	*x = ListSMSSendersRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[25]
+	mi := &file_message_v1_message_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2848,7 +2971,7 @@ func (x *ListSMSSendersRequest) String() string {
 func (*ListSMSSendersRequest) ProtoMessage() {}
 
 func (x *ListSMSSendersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[25]
+	mi := &file_message_v1_message_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2861,7 +2984,7 @@ func (x *ListSMSSendersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSSendersRequest.ProtoReflect.Descriptor instead.
 func (*ListSMSSendersRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{25}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{26}
 }
 
 type ListSMSSendersResponse struct {
@@ -2873,7 +2996,7 @@ type ListSMSSendersResponse struct {
 
 func (x *ListSMSSendersResponse) Reset() {
 	*x = ListSMSSendersResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[26]
+	mi := &file_message_v1_message_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2885,7 +3008,7 @@ func (x *ListSMSSendersResponse) String() string {
 func (*ListSMSSendersResponse) ProtoMessage() {}
 
 func (x *ListSMSSendersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[26]
+	mi := &file_message_v1_message_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2898,7 +3021,7 @@ func (x *ListSMSSendersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSMSSendersResponse.ProtoReflect.Descriptor instead.
 func (*ListSMSSendersResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{26}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListSMSSendersResponse) GetSenderIds() []string {
@@ -2917,7 +3040,7 @@ type ListEmailSendersRequest struct {
 
 func (x *ListEmailSendersRequest) Reset() {
 	*x = ListEmailSendersRequest{}
-	mi := &file_message_v1_message_proto_msgTypes[27]
+	mi := &file_message_v1_message_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2929,7 +3052,7 @@ func (x *ListEmailSendersRequest) String() string {
 func (*ListEmailSendersRequest) ProtoMessage() {}
 
 func (x *ListEmailSendersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[27]
+	mi := &file_message_v1_message_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2942,7 +3065,7 @@ func (x *ListEmailSendersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEmailSendersRequest.ProtoReflect.Descriptor instead.
 func (*ListEmailSendersRequest) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{27}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{28}
 }
 
 type ListEmailSendersResponse struct {
@@ -2954,7 +3077,7 @@ type ListEmailSendersResponse struct {
 
 func (x *ListEmailSendersResponse) Reset() {
 	*x = ListEmailSendersResponse{}
-	mi := &file_message_v1_message_proto_msgTypes[28]
+	mi := &file_message_v1_message_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2966,7 +3089,7 @@ func (x *ListEmailSendersResponse) String() string {
 func (*ListEmailSendersResponse) ProtoMessage() {}
 
 func (x *ListEmailSendersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_message_v1_message_proto_msgTypes[28]
+	mi := &file_message_v1_message_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2979,7 +3102,7 @@ func (x *ListEmailSendersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEmailSendersResponse.ProtoReflect.Descriptor instead.
 func (*ListEmailSendersResponse) Descriptor() ([]byte, []int) {
-	return file_message_v1_message_proto_rawDescGZIP(), []int{28}
+	return file_message_v1_message_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListEmailSendersResponse) GetSenderIds() []string {
@@ -2994,7 +3117,22 @@ var File_message_v1_message_proto protoreflect.FileDescriptor
 const file_message_v1_message_proto_rawDesc = "" +
 	"\n" +
 	"\x18message/v1/message.proto\x12\n" +
-	"message.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/api/annotations.proto\"\xba\b\n" +
+	"message.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xff\x01\n" +
+	"\x04Pong\x12\x18\n" +
+	"\aservice\x18\x01 \x01(\tR\aservice\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1d\n" +
+	"\n" +
+	"git_commit\x18\x03 \x01(\tR\tgitCommit\x12\x1d\n" +
+	"\n" +
+	"git_branch\x18\x04 \x01(\tR\tgitBranch\x12\x1d\n" +
+	"\n" +
+	"build_time\x18\x05 \x01(\tR\tbuildTime\x12\x1d\n" +
+	"\n" +
+	"go_version\x18\x06 \x01(\tR\tgoVersion\x12\x16\n" +
+	"\x06status\x18\a \x01(\tR\x06status\x12\x10\n" +
+	"\x03now\x18\b \x01(\x03R\x03now\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\t \x01(\x03R\tstartedAt\"\xba\b\n" +
 	"\x10SendEmailRequest\x122\n" +
 	"\x02to\x18\x01 \x03(\v2\x18.message.v1.EmailAddressB\b\xbaH\x05\x92\x01\x02\b\x01R\x02to\x12(\n" +
 	"\x02cc\x18\x02 \x03(\v2\x18.message.v1.EmailAddressR\x02cc\x12*\n" +
@@ -3294,9 +3432,9 @@ const file_message_v1_message_proto_rawDesc = "" +
 	"\rSortDirection\x12\x1e\n" +
 	"\x1aSORT_DIRECTION_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12SORT_DIRECTION_ASC\x10\x01\x12\x17\n" +
-	"\x13SORT_DIRECTION_DESC\x10\x022\xd9\n" +
-	"\n" +
-	"\x0eMessageService\x12b\n" +
+	"\x13SORT_DIRECTION_DESC\x10\x022\x9a\v\n" +
+	"\x0eMessageService\x12?\n" +
+	"\x04Ping\x12\x16.google.protobuf.Empty\x1a\x10.message.v1.Pong\"\r\x82\xd3\xe4\x93\x02\a\x12\x05/ping\x12b\n" +
 	"\tSendEmail\x12\x1c.message.v1.SendEmailRequest\x1a\x18.message.v1.SendResponse\"\x1d\x82\xd3\xe4\x93\x02\x17:\x01*\"\x12/v1/messages:email\x12\\\n" +
 	"\aSendSMS\x12\x1a.message.v1.SendSMSRequest\x1a\x18.message.v1.SendResponse\"\x1b\x82\xd3\xe4\x93\x02\x15:\x01*\"\x10/v1/messages:sms\x12Y\n" +
 	"\bGetEmail\x12\x1b.message.v1.GetEmailRequest\x1a\x17.message.v1.EmailRecord\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/v1/emails/{id}\x12_\n" +
@@ -3311,8 +3449,8 @@ const file_message_v1_message_proto_rawDesc = "" +
 	"\vGetSMSStats\x12\x1e.message.v1.GetSMSStatsRequest\x1a\x1c.message.v1.SMSStatsResponse\"\x15\x82\xd3\xe4\x93\x02\x0f\x12\r/v1/sms:stats\x12p\n" +
 	"\x0eListSMSRegions\x12!.message.v1.ListSMSRegionsRequest\x1a\".message.v1.ListSMSRegionsResponse\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/v1/sms:regions\x12p\n" +
 	"\x0eListSMSSenders\x12!.message.v1.ListSMSSendersRequest\x1a\".message.v1.ListSMSSendersResponse\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/v1/sms:senders\x12y\n" +
-	"\x10ListEmailSenders\x12#.message.v1.ListEmailSendersRequest\x1a$.message.v1.ListEmailSendersResponse\"\x1a\x82\xd3\xe4\x93\x02\x14\x12\x12/v1/emails:sendersB\x91\x01\n" +
-	"\x0ecom.message.v1B\fMessageProtoP\x01Z(message-service/gen/message/v1;messagev1\xa2\x02\x03MXX\xaa\x02\n" +
+	"\x10ListEmailSenders\x12#.message.v1.ListEmailSendersRequest\x1a$.message.v1.ListEmailSendersResponse\"\x1a\x82\xd3\xe4\x93\x02\x14\x12\x12/v1/emails:sendersB\xa5\x01\n" +
+	"\x0ecom.message.v1B\fMessageProtoP\x01Z<github.com/servekit/message-service/gen/message/v1;messagev1\xa2\x02\x03MXX\xaa\x02\n" +
 	"Message.V1\xca\x02\n" +
 	"Message\\V1\xe2\x02\x16Message\\V1\\GPBMetadata\xea\x02\vMessage::V1b\x06proto3"
 
@@ -3329,7 +3467,7 @@ func file_message_v1_message_proto_rawDescGZIP() []byte {
 }
 
 var file_message_v1_message_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_message_v1_message_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_message_v1_message_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_message_v1_message_proto_goTypes = []any{
 	(MessageStatus)(0),                 // 0: message.v1.MessageStatus
 	(EmailVendor)(0),                   // 1: message.v1.EmailVendor
@@ -3338,51 +3476,53 @@ var file_message_v1_message_proto_goTypes = []any{
 	(SmsScene)(0),                      // 4: message.v1.SmsScene
 	(SortField)(0),                     // 5: message.v1.SortField
 	(SortDirection)(0),                 // 6: message.v1.SortDirection
-	(*SendEmailRequest)(nil),           // 7: message.v1.SendEmailRequest
-	(*EmailAddress)(nil),               // 8: message.v1.EmailAddress
-	(*EmailAttachment)(nil),            // 9: message.v1.EmailAttachment
-	(*SendSMSRequest)(nil),             // 10: message.v1.SendSMSRequest
-	(*SendResponse)(nil),               // 11: message.v1.SendResponse
-	(*GetEmailRequest)(nil),            // 12: message.v1.GetEmailRequest
-	(*GetSMSRequest)(nil),              // 13: message.v1.GetSMSRequest
-	(*EmailRecord)(nil),                // 14: message.v1.EmailRecord
-	(*SMSRecord)(nil),                  // 15: message.v1.SMSRecord
-	(*ListEmailsRequest)(nil),          // 16: message.v1.ListEmailsRequest
-	(*ListEmailsResponse)(nil),         // 17: message.v1.ListEmailsResponse
-	(*ListSMSRequest)(nil),             // 18: message.v1.ListSMSRequest
-	(*ListSMSResponse)(nil),            // 19: message.v1.ListSMSResponse
-	(*ListEmailsByCursorRequest)(nil),  // 20: message.v1.ListEmailsByCursorRequest
-	(*ListEmailsByCursorResponse)(nil), // 21: message.v1.ListEmailsByCursorResponse
-	(*ListSMSByCursorRequest)(nil),     // 22: message.v1.ListSMSByCursorRequest
-	(*ListSMSByCursorResponse)(nil),    // 23: message.v1.ListSMSByCursorResponse
-	(*GetEmailStatsRequest)(nil),       // 24: message.v1.GetEmailStatsRequest
-	(*GetSMSStatsRequest)(nil),         // 25: message.v1.GetSMSStatsRequest
-	(*EmailStatsResponse)(nil),         // 26: message.v1.EmailStatsResponse
-	(*SMSStatsResponse)(nil),           // 27: message.v1.SMSStatsResponse
-	(*EmailVendorStats)(nil),           // 28: message.v1.EmailVendorStats
-	(*SmsVendorStats)(nil),             // 29: message.v1.SmsVendorStats
-	(*ListSMSRegionsRequest)(nil),      // 30: message.v1.ListSMSRegionsRequest
-	(*ListSMSRegionsResponse)(nil),     // 31: message.v1.ListSMSRegionsResponse
-	(*ListSMSSendersRequest)(nil),      // 32: message.v1.ListSMSSendersRequest
-	(*ListSMSSendersResponse)(nil),     // 33: message.v1.ListSMSSendersResponse
-	(*ListEmailSendersRequest)(nil),    // 34: message.v1.ListEmailSendersRequest
-	(*ListEmailSendersResponse)(nil),   // 35: message.v1.ListEmailSendersResponse
-	nil,                                // 36: message.v1.SendEmailRequest.TemplateParamsEntry
-	nil,                                // 37: message.v1.SendSMSRequest.TemplateParamsEntry
-	nil,                                // 38: message.v1.EmailRecord.TemplateParamsEntry
-	nil,                                // 39: message.v1.SMSRecord.TemplateParamsEntry
+	(*Pong)(nil),                       // 7: message.v1.Pong
+	(*SendEmailRequest)(nil),           // 8: message.v1.SendEmailRequest
+	(*EmailAddress)(nil),               // 9: message.v1.EmailAddress
+	(*EmailAttachment)(nil),            // 10: message.v1.EmailAttachment
+	(*SendSMSRequest)(nil),             // 11: message.v1.SendSMSRequest
+	(*SendResponse)(nil),               // 12: message.v1.SendResponse
+	(*GetEmailRequest)(nil),            // 13: message.v1.GetEmailRequest
+	(*GetSMSRequest)(nil),              // 14: message.v1.GetSMSRequest
+	(*EmailRecord)(nil),                // 15: message.v1.EmailRecord
+	(*SMSRecord)(nil),                  // 16: message.v1.SMSRecord
+	(*ListEmailsRequest)(nil),          // 17: message.v1.ListEmailsRequest
+	(*ListEmailsResponse)(nil),         // 18: message.v1.ListEmailsResponse
+	(*ListSMSRequest)(nil),             // 19: message.v1.ListSMSRequest
+	(*ListSMSResponse)(nil),            // 20: message.v1.ListSMSResponse
+	(*ListEmailsByCursorRequest)(nil),  // 21: message.v1.ListEmailsByCursorRequest
+	(*ListEmailsByCursorResponse)(nil), // 22: message.v1.ListEmailsByCursorResponse
+	(*ListSMSByCursorRequest)(nil),     // 23: message.v1.ListSMSByCursorRequest
+	(*ListSMSByCursorResponse)(nil),    // 24: message.v1.ListSMSByCursorResponse
+	(*GetEmailStatsRequest)(nil),       // 25: message.v1.GetEmailStatsRequest
+	(*GetSMSStatsRequest)(nil),         // 26: message.v1.GetSMSStatsRequest
+	(*EmailStatsResponse)(nil),         // 27: message.v1.EmailStatsResponse
+	(*SMSStatsResponse)(nil),           // 28: message.v1.SMSStatsResponse
+	(*EmailVendorStats)(nil),           // 29: message.v1.EmailVendorStats
+	(*SmsVendorStats)(nil),             // 30: message.v1.SmsVendorStats
+	(*ListSMSRegionsRequest)(nil),      // 31: message.v1.ListSMSRegionsRequest
+	(*ListSMSRegionsResponse)(nil),     // 32: message.v1.ListSMSRegionsResponse
+	(*ListSMSSendersRequest)(nil),      // 33: message.v1.ListSMSSendersRequest
+	(*ListSMSSendersResponse)(nil),     // 34: message.v1.ListSMSSendersResponse
+	(*ListEmailSendersRequest)(nil),    // 35: message.v1.ListEmailSendersRequest
+	(*ListEmailSendersResponse)(nil),   // 36: message.v1.ListEmailSendersResponse
+	nil,                                // 37: message.v1.SendEmailRequest.TemplateParamsEntry
+	nil,                                // 38: message.v1.SendSMSRequest.TemplateParamsEntry
+	nil,                                // 39: message.v1.EmailRecord.TemplateParamsEntry
+	nil,                                // 40: message.v1.SMSRecord.TemplateParamsEntry
+	(*emptypb.Empty)(nil),              // 41: google.protobuf.Empty
 }
 var file_message_v1_message_proto_depIdxs = []int32{
-	8,  // 0: message.v1.SendEmailRequest.to:type_name -> message.v1.EmailAddress
-	8,  // 1: message.v1.SendEmailRequest.cc:type_name -> message.v1.EmailAddress
-	8,  // 2: message.v1.SendEmailRequest.bcc:type_name -> message.v1.EmailAddress
-	8,  // 3: message.v1.SendEmailRequest.reply_to:type_name -> message.v1.EmailAddress
+	9,  // 0: message.v1.SendEmailRequest.to:type_name -> message.v1.EmailAddress
+	9,  // 1: message.v1.SendEmailRequest.cc:type_name -> message.v1.EmailAddress
+	9,  // 2: message.v1.SendEmailRequest.bcc:type_name -> message.v1.EmailAddress
+	9,  // 3: message.v1.SendEmailRequest.reply_to:type_name -> message.v1.EmailAddress
 	1,  // 4: message.v1.SendEmailRequest.vendor:type_name -> message.v1.EmailVendor
-	36, // 5: message.v1.SendEmailRequest.template_params:type_name -> message.v1.SendEmailRequest.TemplateParamsEntry
+	37, // 5: message.v1.SendEmailRequest.template_params:type_name -> message.v1.SendEmailRequest.TemplateParamsEntry
 	3,  // 6: message.v1.SendEmailRequest.scene:type_name -> message.v1.EmailScene
-	8,  // 7: message.v1.SendEmailRequest.from:type_name -> message.v1.EmailAddress
-	9,  // 8: message.v1.SendEmailRequest.attachments:type_name -> message.v1.EmailAttachment
-	37, // 9: message.v1.SendSMSRequest.template_params:type_name -> message.v1.SendSMSRequest.TemplateParamsEntry
+	9,  // 7: message.v1.SendEmailRequest.from:type_name -> message.v1.EmailAddress
+	10, // 8: message.v1.SendEmailRequest.attachments:type_name -> message.v1.EmailAttachment
+	38, // 9: message.v1.SendSMSRequest.template_params:type_name -> message.v1.SendSMSRequest.TemplateParamsEntry
 	2,  // 10: message.v1.SendSMSRequest.vendor:type_name -> message.v1.SmsVendor
 	4,  // 11: message.v1.SendSMSRequest.scene:type_name -> message.v1.SmsScene
 	0,  // 12: message.v1.SendResponse.status:type_name -> message.v1.MessageStatus
@@ -3391,76 +3531,78 @@ var file_message_v1_message_proto_depIdxs = []int32{
 	1,  // 15: message.v1.EmailRecord.vendor:type_name -> message.v1.EmailVendor
 	3,  // 16: message.v1.EmailRecord.scene:type_name -> message.v1.EmailScene
 	0,  // 17: message.v1.EmailRecord.status:type_name -> message.v1.MessageStatus
-	8,  // 18: message.v1.EmailRecord.target:type_name -> message.v1.EmailAddress
-	8,  // 19: message.v1.EmailRecord.cc:type_name -> message.v1.EmailAddress
-	8,  // 20: message.v1.EmailRecord.bcc:type_name -> message.v1.EmailAddress
-	8,  // 21: message.v1.EmailRecord.reply_to:type_name -> message.v1.EmailAddress
-	38, // 22: message.v1.EmailRecord.template_params:type_name -> message.v1.EmailRecord.TemplateParamsEntry
-	9,  // 23: message.v1.EmailRecord.attachments:type_name -> message.v1.EmailAttachment
+	9,  // 18: message.v1.EmailRecord.target:type_name -> message.v1.EmailAddress
+	9,  // 19: message.v1.EmailRecord.cc:type_name -> message.v1.EmailAddress
+	9,  // 20: message.v1.EmailRecord.bcc:type_name -> message.v1.EmailAddress
+	9,  // 21: message.v1.EmailRecord.reply_to:type_name -> message.v1.EmailAddress
+	39, // 22: message.v1.EmailRecord.template_params:type_name -> message.v1.EmailRecord.TemplateParamsEntry
+	10, // 23: message.v1.EmailRecord.attachments:type_name -> message.v1.EmailAttachment
 	2,  // 24: message.v1.SMSRecord.vendor:type_name -> message.v1.SmsVendor
 	4,  // 25: message.v1.SMSRecord.scene:type_name -> message.v1.SmsScene
 	0,  // 26: message.v1.SMSRecord.status:type_name -> message.v1.MessageStatus
-	39, // 27: message.v1.SMSRecord.template_params:type_name -> message.v1.SMSRecord.TemplateParamsEntry
+	40, // 27: message.v1.SMSRecord.template_params:type_name -> message.v1.SMSRecord.TemplateParamsEntry
 	1,  // 28: message.v1.ListEmailsRequest.vendor:type_name -> message.v1.EmailVendor
 	3,  // 29: message.v1.ListEmailsRequest.scene:type_name -> message.v1.EmailScene
 	0,  // 30: message.v1.ListEmailsRequest.status:type_name -> message.v1.MessageStatus
 	5,  // 31: message.v1.ListEmailsRequest.sort_field:type_name -> message.v1.SortField
 	6,  // 32: message.v1.ListEmailsRequest.sort_direction:type_name -> message.v1.SortDirection
-	14, // 33: message.v1.ListEmailsResponse.records:type_name -> message.v1.EmailRecord
+	15, // 33: message.v1.ListEmailsResponse.records:type_name -> message.v1.EmailRecord
 	2,  // 34: message.v1.ListSMSRequest.vendor:type_name -> message.v1.SmsVendor
 	4,  // 35: message.v1.ListSMSRequest.scene:type_name -> message.v1.SmsScene
 	0,  // 36: message.v1.ListSMSRequest.status:type_name -> message.v1.MessageStatus
 	5,  // 37: message.v1.ListSMSRequest.sort_field:type_name -> message.v1.SortField
 	6,  // 38: message.v1.ListSMSRequest.sort_direction:type_name -> message.v1.SortDirection
-	15, // 39: message.v1.ListSMSResponse.records:type_name -> message.v1.SMSRecord
+	16, // 39: message.v1.ListSMSResponse.records:type_name -> message.v1.SMSRecord
 	1,  // 40: message.v1.ListEmailsByCursorRequest.vendor:type_name -> message.v1.EmailVendor
 	3,  // 41: message.v1.ListEmailsByCursorRequest.scene:type_name -> message.v1.EmailScene
 	0,  // 42: message.v1.ListEmailsByCursorRequest.status:type_name -> message.v1.MessageStatus
 	5,  // 43: message.v1.ListEmailsByCursorRequest.sort_field:type_name -> message.v1.SortField
 	6,  // 44: message.v1.ListEmailsByCursorRequest.sort_direction:type_name -> message.v1.SortDirection
-	14, // 45: message.v1.ListEmailsByCursorResponse.records:type_name -> message.v1.EmailRecord
+	15, // 45: message.v1.ListEmailsByCursorResponse.records:type_name -> message.v1.EmailRecord
 	2,  // 46: message.v1.ListSMSByCursorRequest.vendor:type_name -> message.v1.SmsVendor
 	4,  // 47: message.v1.ListSMSByCursorRequest.scene:type_name -> message.v1.SmsScene
 	0,  // 48: message.v1.ListSMSByCursorRequest.status:type_name -> message.v1.MessageStatus
 	5,  // 49: message.v1.ListSMSByCursorRequest.sort_field:type_name -> message.v1.SortField
 	6,  // 50: message.v1.ListSMSByCursorRequest.sort_direction:type_name -> message.v1.SortDirection
-	15, // 51: message.v1.ListSMSByCursorResponse.records:type_name -> message.v1.SMSRecord
+	16, // 51: message.v1.ListSMSByCursorResponse.records:type_name -> message.v1.SMSRecord
 	1,  // 52: message.v1.GetEmailStatsRequest.vendor:type_name -> message.v1.EmailVendor
 	3,  // 53: message.v1.GetEmailStatsRequest.scene:type_name -> message.v1.EmailScene
 	2,  // 54: message.v1.GetSMSStatsRequest.vendor:type_name -> message.v1.SmsVendor
 	4,  // 55: message.v1.GetSMSStatsRequest.scene:type_name -> message.v1.SmsScene
-	28, // 56: message.v1.EmailStatsResponse.vendors:type_name -> message.v1.EmailVendorStats
-	29, // 57: message.v1.SMSStatsResponse.vendors:type_name -> message.v1.SmsVendorStats
+	29, // 56: message.v1.EmailStatsResponse.vendors:type_name -> message.v1.EmailVendorStats
+	30, // 57: message.v1.SMSStatsResponse.vendors:type_name -> message.v1.SmsVendorStats
 	1,  // 58: message.v1.EmailVendorStats.vendor:type_name -> message.v1.EmailVendor
 	2,  // 59: message.v1.SmsVendorStats.vendor:type_name -> message.v1.SmsVendor
-	7,  // 60: message.v1.MessageService.SendEmail:input_type -> message.v1.SendEmailRequest
-	10, // 61: message.v1.MessageService.SendSMS:input_type -> message.v1.SendSMSRequest
-	12, // 62: message.v1.MessageService.GetEmail:input_type -> message.v1.GetEmailRequest
-	16, // 63: message.v1.MessageService.ListEmails:input_type -> message.v1.ListEmailsRequest
-	20, // 64: message.v1.MessageService.ListEmailsByCursor:input_type -> message.v1.ListEmailsByCursorRequest
-	24, // 65: message.v1.MessageService.GetEmailStats:input_type -> message.v1.GetEmailStatsRequest
-	13, // 66: message.v1.MessageService.GetSMS:input_type -> message.v1.GetSMSRequest
-	18, // 67: message.v1.MessageService.ListSMS:input_type -> message.v1.ListSMSRequest
-	22, // 68: message.v1.MessageService.ListSMSByCursor:input_type -> message.v1.ListSMSByCursorRequest
-	25, // 69: message.v1.MessageService.GetSMSStats:input_type -> message.v1.GetSMSStatsRequest
-	30, // 70: message.v1.MessageService.ListSMSRegions:input_type -> message.v1.ListSMSRegionsRequest
-	32, // 71: message.v1.MessageService.ListSMSSenders:input_type -> message.v1.ListSMSSendersRequest
-	34, // 72: message.v1.MessageService.ListEmailSenders:input_type -> message.v1.ListEmailSendersRequest
-	11, // 73: message.v1.MessageService.SendEmail:output_type -> message.v1.SendResponse
-	11, // 74: message.v1.MessageService.SendSMS:output_type -> message.v1.SendResponse
-	14, // 75: message.v1.MessageService.GetEmail:output_type -> message.v1.EmailRecord
-	17, // 76: message.v1.MessageService.ListEmails:output_type -> message.v1.ListEmailsResponse
-	21, // 77: message.v1.MessageService.ListEmailsByCursor:output_type -> message.v1.ListEmailsByCursorResponse
-	26, // 78: message.v1.MessageService.GetEmailStats:output_type -> message.v1.EmailStatsResponse
-	15, // 79: message.v1.MessageService.GetSMS:output_type -> message.v1.SMSRecord
-	19, // 80: message.v1.MessageService.ListSMS:output_type -> message.v1.ListSMSResponse
-	23, // 81: message.v1.MessageService.ListSMSByCursor:output_type -> message.v1.ListSMSByCursorResponse
-	27, // 82: message.v1.MessageService.GetSMSStats:output_type -> message.v1.SMSStatsResponse
-	31, // 83: message.v1.MessageService.ListSMSRegions:output_type -> message.v1.ListSMSRegionsResponse
-	33, // 84: message.v1.MessageService.ListSMSSenders:output_type -> message.v1.ListSMSSendersResponse
-	35, // 85: message.v1.MessageService.ListEmailSenders:output_type -> message.v1.ListEmailSendersResponse
-	73, // [73:86] is the sub-list for method output_type
-	60, // [60:73] is the sub-list for method input_type
+	41, // 60: message.v1.MessageService.Ping:input_type -> google.protobuf.Empty
+	8,  // 61: message.v1.MessageService.SendEmail:input_type -> message.v1.SendEmailRequest
+	11, // 62: message.v1.MessageService.SendSMS:input_type -> message.v1.SendSMSRequest
+	13, // 63: message.v1.MessageService.GetEmail:input_type -> message.v1.GetEmailRequest
+	17, // 64: message.v1.MessageService.ListEmails:input_type -> message.v1.ListEmailsRequest
+	21, // 65: message.v1.MessageService.ListEmailsByCursor:input_type -> message.v1.ListEmailsByCursorRequest
+	25, // 66: message.v1.MessageService.GetEmailStats:input_type -> message.v1.GetEmailStatsRequest
+	14, // 67: message.v1.MessageService.GetSMS:input_type -> message.v1.GetSMSRequest
+	19, // 68: message.v1.MessageService.ListSMS:input_type -> message.v1.ListSMSRequest
+	23, // 69: message.v1.MessageService.ListSMSByCursor:input_type -> message.v1.ListSMSByCursorRequest
+	26, // 70: message.v1.MessageService.GetSMSStats:input_type -> message.v1.GetSMSStatsRequest
+	31, // 71: message.v1.MessageService.ListSMSRegions:input_type -> message.v1.ListSMSRegionsRequest
+	33, // 72: message.v1.MessageService.ListSMSSenders:input_type -> message.v1.ListSMSSendersRequest
+	35, // 73: message.v1.MessageService.ListEmailSenders:input_type -> message.v1.ListEmailSendersRequest
+	7,  // 74: message.v1.MessageService.Ping:output_type -> message.v1.Pong
+	12, // 75: message.v1.MessageService.SendEmail:output_type -> message.v1.SendResponse
+	12, // 76: message.v1.MessageService.SendSMS:output_type -> message.v1.SendResponse
+	15, // 77: message.v1.MessageService.GetEmail:output_type -> message.v1.EmailRecord
+	18, // 78: message.v1.MessageService.ListEmails:output_type -> message.v1.ListEmailsResponse
+	22, // 79: message.v1.MessageService.ListEmailsByCursor:output_type -> message.v1.ListEmailsByCursorResponse
+	27, // 80: message.v1.MessageService.GetEmailStats:output_type -> message.v1.EmailStatsResponse
+	16, // 81: message.v1.MessageService.GetSMS:output_type -> message.v1.SMSRecord
+	20, // 82: message.v1.MessageService.ListSMS:output_type -> message.v1.ListSMSResponse
+	24, // 83: message.v1.MessageService.ListSMSByCursor:output_type -> message.v1.ListSMSByCursorResponse
+	28, // 84: message.v1.MessageService.GetSMSStats:output_type -> message.v1.SMSStatsResponse
+	32, // 85: message.v1.MessageService.ListSMSRegions:output_type -> message.v1.ListSMSRegionsResponse
+	34, // 86: message.v1.MessageService.ListSMSSenders:output_type -> message.v1.ListSMSSendersResponse
+	36, // 87: message.v1.MessageService.ListEmailSenders:output_type -> message.v1.ListEmailSendersResponse
+	74, // [74:88] is the sub-list for method output_type
+	60, // [60:74] is the sub-list for method input_type
 	60, // [60:60] is the sub-list for extension type_name
 	60, // [60:60] is the sub-list for extension extendee
 	0,  // [0:60] is the sub-list for field type_name
@@ -3471,7 +3613,7 @@ func file_message_v1_message_proto_init() {
 	if File_message_v1_message_proto != nil {
 		return
 	}
-	file_message_v1_message_proto_msgTypes[4].OneofWrappers = []any{
+	file_message_v1_message_proto_msgTypes[5].OneofWrappers = []any{
 		(*SendResponse_EmailVendor)(nil),
 		(*SendResponse_SmsVendor)(nil),
 	}
@@ -3481,7 +3623,7 @@ func file_message_v1_message_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_message_v1_message_proto_rawDesc), len(file_message_v1_message_proto_rawDesc)),
 			NumEnums:      7,
-			NumMessages:   33,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

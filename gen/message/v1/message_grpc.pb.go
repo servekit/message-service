@@ -11,6 +11,7 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -19,6 +20,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	MessageService_Ping_FullMethodName               = "/message.v1.MessageService/Ping"
 	MessageService_SendEmail_FullMethodName          = "/message.v1.MessageService/SendEmail"
 	MessageService_SendSMS_FullMethodName            = "/message.v1.MessageService/SendSMS"
 	MessageService_GetEmail_FullMethodName           = "/message.v1.MessageService/GetEmail"
@@ -37,19 +39,8 @@ const (
 // MessageServiceClient is the client API for MessageService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// MessageService handles sending, recording, and querying messages.
-//
-// Channel split: emails and SMSs have parallel RPC families — Send, Get,
-// List (offset), ListByCursor, and Stats — plus three cross-channel helpers
-// (ListSMSRegions / ListSMSSenders / ListEmailSenders) for UI filter dropdowns.
-//
-// Persistence: when persistence.{email,sms}.enabled = false, query RPCs return
-// ErrPersistenceDisabled (503) — send RPCs still work (records skipped).
-//
-// Idempotency: orthogonal to persistence. When idempotency_key is set, Redis
-// dedupes per (sender_id, key); see SendEmail/SendSMS for the exact contract.
 type MessageServiceClient interface {
+	Ping(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Pong, error)
 	// SendEmail sends an email via the configured vendor/account, or the default
 	// fallback chain when both vendor + account are unset.
 	//
@@ -145,6 +136,16 @@ type messageServiceClient struct {
 
 func NewMessageServiceClient(cc grpc.ClientConnInterface) MessageServiceClient {
 	return &messageServiceClient{cc}
+}
+
+func (c *messageServiceClient) Ping(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Pong, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Pong)
+	err := c.cc.Invoke(ctx, MessageService_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *messageServiceClient) SendEmail(ctx context.Context, in *SendEmailRequest, opts ...grpc.CallOption) (*SendResponse, error) {
@@ -280,19 +281,8 @@ func (c *messageServiceClient) ListEmailSenders(ctx context.Context, in *ListEma
 // MessageServiceServer is the server API for MessageService service.
 // All implementations must embed UnimplementedMessageServiceServer
 // for forward compatibility.
-//
-// MessageService handles sending, recording, and querying messages.
-//
-// Channel split: emails and SMSs have parallel RPC families — Send, Get,
-// List (offset), ListByCursor, and Stats — plus three cross-channel helpers
-// (ListSMSRegions / ListSMSSenders / ListEmailSenders) for UI filter dropdowns.
-//
-// Persistence: when persistence.{email,sms}.enabled = false, query RPCs return
-// ErrPersistenceDisabled (503) — send RPCs still work (records skipped).
-//
-// Idempotency: orthogonal to persistence. When idempotency_key is set, Redis
-// dedupes per (sender_id, key); see SendEmail/SendSMS for the exact contract.
 type MessageServiceServer interface {
+	Ping(context.Context, *emptypb.Empty) (*Pong, error)
 	// SendEmail sends an email via the configured vendor/account, or the default
 	// fallback chain when both vendor + account are unset.
 	//
@@ -390,6 +380,9 @@ type MessageServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMessageServiceServer struct{}
 
+func (UnimplementedMessageServiceServer) Ping(context.Context, *emptypb.Empty) (*Pong, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
 func (UnimplementedMessageServiceServer) SendEmail(context.Context, *SendEmailRequest) (*SendResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendEmail not implemented")
 }
@@ -448,6 +441,24 @@ func RegisterMessageServiceServer(s grpc.ServiceRegistrar, srv MessageServiceSer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&MessageService_ServiceDesc, srv)
+}
+
+func _MessageService_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_Ping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).Ping(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _MessageService_SendEmail_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -691,6 +702,10 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "message.v1.MessageService",
 	HandlerType: (*MessageServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Ping",
+			Handler:    _MessageService_Ping_Handler,
+		},
 		{
 			MethodName: "SendEmail",
 			Handler:    _MessageService_SendEmail_Handler,

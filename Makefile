@@ -6,9 +6,20 @@
 BIN_NAME := message-service
 CMD_DIR  := cmd/server
 
-## build: Build the message-service binary (server + migrate in one)
+# Build-time version info injected via -ldflags into internal/version.
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BRANCH    ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+BUILDTIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_PKG := github.com/servekit/message-service/internal/version
+LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) \
+           -X $(VERSION_PKG).GitCommit=$(COMMIT) \
+           -X $(VERSION_PKG).GitBranch=$(BRANCH) \
+           -X $(VERSION_PKG).BuildTime=$(BUILDTIME)
+
+## build: Build the message-service binary (version info via -ldflags)
 build:
-	go build -o bin/$(BIN_NAME) ./$(CMD_DIR)/
+	go build -ldflags "$(LDFLAGS)" -o bin/$(BIN_NAME) ./$(CMD_DIR)/
 
 ## run: Run the server locally
 run:

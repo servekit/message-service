@@ -16,6 +16,8 @@ import (
 
 	pb "github.com/servekit/message-service/gen/message/v1"
 	"github.com/servekit/message-service/internal/service"
+
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Handler implements message.v1.MessageServiceServer.
@@ -43,6 +45,11 @@ func (h *Handler) Start() error { return h.svc.Start() }
 // Stop releases resources owned by the service. After Stop, the Handler
 // must not be used.
 func (h *Handler) Stop() error { return h.svc.Stop() }
+
+// Ping is a health-check RPC.
+func (h *Handler) Ping(ctx context.Context, _ *emptypb.Empty) (*pb.Pong, error) {
+	return h.svc.Ping(ctx)
+}
 
 // --- gRPC method delegations ---
 // Each method delegates to internal/service. Comments below describe "how to
