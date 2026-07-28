@@ -8,6 +8,8 @@ import (
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/handler"
 	"github.com/servekit/message-service/pkg/option"
+
+	"gorm.io/gorm"
 )
 
 // Handler is the in-process entry point. Aliased to *handler.Handler so
@@ -36,4 +38,14 @@ func NewModule(cfg *config.Config, opts ...option.Option) (*Handler, error) {
 		return nil, err
 	}
 	return handler.New(svc), nil
+}
+
+// Migrate applies the current schema (GORM AutoMigrate) to db. It re-exports
+// handler.Migrate so embedders and the `migrate` subcommand share one entry
+// point:
+//
+//	messageservice.Migrate(parentDB)                              // before NewModule
+//	hdl, err := messageservice.NewModule(cfg, option.WithDB(parentDB))
+func Migrate(db *gorm.DB) error {
+	return handler.Migrate(db)
 }
