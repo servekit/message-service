@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -22,6 +23,7 @@ import (
 	provesms "github.com/servekit/message-service/internal/provider/sms"
 	svcemail "github.com/servekit/message-service/internal/service/email"
 	svcsms "github.com/servekit/message-service/internal/service/sms"
+	"github.com/servekit/message-service/internal/version"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
 	"github.com/servekit/message-service/pkg/thirdcall"
@@ -41,6 +43,9 @@ type Service struct {
 
 	email *svcemail.Service
 	sms   *svcsms.Service
+
+	// startedAt is set once in New; Ping returns it for uptime.
+	startedAt int64
 }
 
 // New constructs a Service from config and functional options.
@@ -150,6 +155,7 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		email: svcemail.New(db, idemChecker, gid, emailRegistry,
 			cfg.Email.Persistence, cfg.Email.Attachment, httpClient),
 		sms: svcsms.New(db, idemChecker, gid, smsRegistry, smsRouter, cfg.SMS.Persistence),
+		startedAt: time.Now().UnixMilli(),
 	}
 
 	return svc, nil
@@ -160,6 +166,22 @@ func (s *Service) Start() error { return s.mgr.Start() }
 
 // Stop stops all owned components in reverse registration order.
 func (s *Service) Stop() error { return s.mgr.Stop() }
+
+// Ping is a health-check RPC. Returns only public, non-sensitive info.
+func (s *Service) Ping(ctx context.Context) (*pb.Pong, error) {
+	v := version.Get()
+	return &pb.Pong{
+		Service:   "message-service",
+		Version:   v.Version,
+		GitCommit: v.GitCommit,
+		GitBranch: v.GitBranch,
+		BuildTime: v.BuildTime,
+		GoVersion: v.GoVersion,
+		Status:    "SERVING",
+		Now:       time.Now().UnixMilli(),
+		StartedAt: s.startedAt,
+	}, nil
+}
 
 // --- facade methods (one per RPC, delegate to subpackage) ---
 
