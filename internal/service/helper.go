@@ -137,17 +137,18 @@ func resolveDB(cfg *config.Config, injected *gorm.DB, mgr *lifecycle.Manager) (*
 	return db, nil
 }
 
-// resolveGID returns the GIDService. grpc mode dials cfg.Target; module mode
-// uses an injected raw *gidservice.Handler (option.WithGIDHandler) when a
-// parent embeds this service (parent owns lifecycle, no Stopper), otherwise
-// builds one from cfg.Config (standalone). grpc and self-built register a
-// Stopper so mgr.Stop closes the client / stops the Handler. The GIDService
-// interface is internal.
+// resolveGID returns the GIDService. grpc mode dials cfg.Target and registers
+// a stopper (the GIDService's Close drops the connection); module mode uses an
+// injected raw *gidservice.Handler (option.WithGIDHandler) when a parent embeds
+// this service (parent owns lifecycle, nothing registered), otherwise builds one
+// from cfg.Config (standalone) and registers the raw Handler with the Manager
+// via mgr.Add (it owns the Handler's Start/Stop). The GIDService interface is
+// internal.
 func resolveGID(o *option.Options, cfg *config.RemoteServiceConfig[*gidconfig.Config], mgr *lifecycle.Manager) (gid_service.GIDService, error) {
 	// Injected handler takes precedence (a parent shares its gid Handler),
 	// even if cfg is nil (no ThirdParty.GID configured).
 	if o.GIDHandler != nil {
-		return gid_service.NewModule(o.GIDHandler, false), nil // injected → borrowed; parent owns lifecycle
+		return gid_service.NewModule(o.GIDHandler), nil // injected → borrowed; parent owns lifecycle
 	}
 	if cfg == nil {
 		return nil, fmt.Errorf("third_party.gid: not configured")
@@ -168,8 +169,8 @@ func resolveGID(o *option.Options, cfg *config.RemoteServiceConfig[*gidconfig.Co
 		if err != nil {
 			return nil, fmt.Errorf("init gid-service: %w", err)
 		}
-		gid := gid_service.NewModule(hdl, true)
-		mgr.AddStopper("gid", lifecycle.StopFunc(func() { _ = gid.Close() }))
+		gid := gid_service.NewModule(hdl)
+		mgr.Add("gid", hdl)
 		return gid, nil
 	default:
 		return nil, fmt.Errorf("third_party.gid: unknown mode %q", cfg.Mode)
