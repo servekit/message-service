@@ -8,8 +8,8 @@ import (
 
 	"github.com/servekit/message-service/internal/idempotency"
 	provemail "github.com/servekit/message-service/internal/provider/email"
+	gid_service "github.com/servekit/message-service/internal/thirdcall/gid_service"
 	"github.com/servekit/message-service/pkg/config"
-	"github.com/servekit/message-service/pkg/thirdcall"
 
 	"gorm.io/gorm"
 )
@@ -19,7 +19,7 @@ import (
 type Service struct {
 	db            *gorm.DB
 	idem          idempotency.Checker
-	gid           thirdcall.GIDService
+	gid           gid_service.GIDService
 	emailRegistry *provemail.AccountRegistry
 	httpClient    *http.Client
 
@@ -35,7 +35,7 @@ type Service struct {
 func New(
 	db *gorm.DB,
 	idem idempotency.Checker,
-	gid thirdcall.GIDService,
+	gid gid_service.GIDService,
 	emailRegistry *provemail.AccountRegistry,
 	persistence bool,
 	attachment *config.AttachmentConfig,

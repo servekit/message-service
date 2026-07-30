@@ -5,12 +5,15 @@ import (
 	"log/slog"
 
 	"github.com/redis/go-redis/v9"
+	gidservice "github.com/servekit/gid-service/pkg"
+	gidconfig "github.com/servekit/gid-service/pkg/config"
 	"gorm.io/gorm"
 
 	pb "github.com/servekit/message-service/gen/message/v1"
 	"github.com/servekit/message-service/internal/provider/sms"
+	gid_service "github.com/servekit/message-service/internal/thirdcall/gid_service"
 	"github.com/servekit/message-service/pkg/config"
-	"github.com/servekit/message-service/pkg/thirdcall"
+	"github.com/servekit/message-service/pkg/option"
 
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/lifecycle"
@@ -134,26 +137,41 @@ func resolveDB(cfg *config.Config, injected *gorm.DB, mgr *lifecycle.Manager) (*
 	return db, nil
 }
 
-// resolveGID returns the GIDService to use. If the caller injected one via
-// WithGIDService, it's returned as-is. Otherwise a new one is built from cfg
-// and — if it implements Close() — registered with mgr as a Stopper.
-//
-// The module-mode snowflake generator has no resources to Close, so it is
-// NOT registered.
-func resolveGID(cfg *config.Config, injected thirdcall.GIDService, mgr *lifecycle.Manager) (thirdcall.GIDService, error) {
-	if injected != nil {
-		return injected, nil
+// resolveGID returns the GIDService. grpc mode dials cfg.Target; module mode
+// uses an injected raw *gidservice.Handler (option.WithGIDHandler) when a
+// parent embeds this service (parent owns lifecycle, no Stopper), otherwise
+// builds one from cfg.Config (standalone). grpc and self-built register a
+// Stopper so mgr.Stop closes the client / stops the Handler. The GIDService
+// interface is internal.
+func resolveGID(o *option.Options, cfg *config.RemoteServiceConfig[*gidconfig.Config], mgr *lifecycle.Manager) (gid_service.GIDService, error) {
+	// Injected handler takes precedence (a parent shares its gid Handler),
+	// even if cfg is nil (no ThirdParty.GID configured).
+	if o.GIDHandler != nil {
+		return gid_service.NewModule(o.GIDHandler, false), nil // injected → borrowed; parent owns lifecycle
 	}
-	gid, err := thirdcall.NewGIDService(cfg.ThirdParty.GID)
-	if err != nil {
-		return nil, fmt.Errorf("gid service: %w", err)
+	if cfg == nil {
+		return nil, fmt.Errorf("third_party.gid: not configured")
 	}
-	if closer, ok := gid.(interface{ Close() error }); ok {
-		mgr.AddStopper("gid", lifecycle.StopFunc(func() {
-			if err := closer.Close(); err != nil {
-				slog.Warn("close gid", "error", err)
-			}
-		}))
+	switch cfg.Mode {
+	case "grpc":
+		gid, err := gid_service.NewGRPC(cfg.Target)
+		if err != nil {
+			return nil, fmt.Errorf("init gid-service: %w", err)
+		}
+		mgr.AddStopper("gid", lifecycle.StopFunc(func() { _ = gid.Close() }))
+		return gid, nil
+	case "module":
+		if cfg.Config == nil {
+			return nil, fmt.Errorf("third_party.gid: module config required when no handler injected")
+		}
+		hdl, err := gidservice.NewModule(cfg.Config)
+		if err != nil {
+			return nil, fmt.Errorf("init gid-service: %w", err)
+		}
+		gid := gid_service.NewModule(hdl, true)
+		mgr.AddStopper("gid", lifecycle.StopFunc(func() { _ = gid.Close() }))
+		return gid, nil
+	default:
+		return nil, fmt.Errorf("third_party.gid: unknown mode %q", cfg.Mode)
 	}
-	return gid, nil
 }

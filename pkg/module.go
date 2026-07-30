@@ -30,7 +30,7 @@ var _ pb.MessageServiceServer = (*Handler)(nil)
 //	defer hdl.Stop()
 //	resp, err := hdl.GetEmail(ctx, &pb.GetEmailRequest{Id: 1})
 //
-// Resources injected via option.WithDB / WithGIDService are NOT owned by
+// Resources injected via option.WithDB / WithGIDHandler are NOT owned by
 // the service — parent process keeps ownership.
 func NewModule(cfg *config.Config, opts ...option.Option) (*Handler, error) {
 	svc, err := service.New(cfg, opts...)

@@ -2,9 +2,8 @@
 package option
 
 import (
-	"github.com/servekit/message-service/pkg/thirdcall"
-
 	"github.com/redis/go-redis/v9"
+	gidservice "github.com/servekit/gid-service/pkg"
 	"gorm.io/gorm"
 )
 
@@ -15,7 +14,7 @@ type Option func(*Options)
 type Options struct {
 	DB         *gorm.DB
 	Redis      *redis.Client
-	GIDService thirdcall.GIDService
+	GIDHandler *gidservice.Handler
 
 	EmailPersistence *bool // nil = use yaml/default
 	SMSPersistence   *bool
@@ -31,10 +30,13 @@ func WithRedis(client *redis.Client) Option {
 	return func(o *Options) { o.Redis = client }
 }
 
-// WithGIDService provides a gid-service instance.
-// If not set, the service creates one from config.ThirdParty.GID.
-func WithGIDService(svc thirdcall.GIDService) Option {
-	return func(o *Options) { o.GIDService = svc }
+// WithGIDHandler injects a raw gid-service Handler. message-service wraps it
+// internally into its GIDService; callers do not need to know that interface.
+// Required when third_party.gid.mode=module (a parent process embeds this
+// service and owns the Handler); in grpc mode the service dials gid-service
+// itself and this option is unused.
+func WithGIDHandler(h *gidservice.Handler) Option {
+	return func(o *Options) { o.GIDHandler = h }
 }
 
 // WithEmailPersistence overrides the email persistence toggle. When set,

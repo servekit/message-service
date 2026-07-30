@@ -11,8 +11,7 @@ import (
 	"github.com/servekit/message-service/internal/idempotency"
 	"github.com/servekit/message-service/internal/provider/sms"
 	"github.com/servekit/message-service/internal/store/models"
-	"github.com/servekit/message-service/pkg/config"
-	"github.com/servekit/message-service/pkg/thirdcall"
+	gid_service "github.com/servekit/message-service/internal/thirdcall/gid_service"
 	"github.com/servekit/message-service/pkg/xcodes"
 
 	pb "github.com/servekit/message-service/gen/message/v1"
@@ -20,6 +19,7 @@ import (
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/redisx"
 
+	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
 
 	"github.com/stretchr/testify/assert"
@@ -47,7 +47,7 @@ func (m *mockSMSProvider) SendInternational(_ context.Context, _ *sms.Internatio
 	return m.err
 }
 
-// failingGID is a thirdcall.GIDService that always errors. Used to exercise
+// failingGID is a gid_service.GIDService that always errors. Used to exercise
 // the gid.NextID error path in SendSMS.
 type failingGID struct{}
 
@@ -55,27 +55,31 @@ func (failingGID) NextID(context.Context) (int64, error) {
 	return 0, errors.New("gid unavailable")
 }
 
+func (failingGID) Close() error { return nil }
+
 // --- helpers ---
 
-var testGIDOnce sync.Once
-var testGID thirdcall.GIDService
+var testGIDHandlerOnce sync.Once
+var testGIDHandler *gidservice.Handler
 
-func getTestGID(t *testing.T) thirdcall.GIDService {
+// getTestGID returns a GIDService wrapping a real in-process gid-service
+// Handler. The Handler is built once and shared across tests (the snowflake
+// generator is the expensive part); NewModule only wraps. Module mode no
+// longer builds from config — the raw Handler is constructed here, matching
+// how a parent process injects option.WithGIDHandler in production.
+func getTestGID(t *testing.T) gid_service.GIDService {
 	t.Helper()
-	testGIDOnce.Do(func() {
-		var err error
-		testGID, err = thirdcall.NewGIDService(&config.RemoteServiceConfig[*gidconfig.Config]{
-			Mode: "module",
-			Config: &gidconfig.Config{
-				Snowflake: &gidconfig.SnowflakeConfig{
-					MachineID: 1,
-					StartTime: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
-				},
+	testGIDHandlerOnce.Do(func() {
+		hdl, err := gidservice.NewModule(&gidconfig.Config{
+			Snowflake: &gidconfig.SnowflakeConfig{
+				MachineID: 1,
+				StartTime: time.Now().Add(-time.Hour),
 			},
 		})
 		require.NoError(t, err)
+		testGIDHandler = hdl
 	})
-	return testGID
+	return gid_service.NewModule(testGIDHandler, false)
 }
 
 func setupSMSTestDB(t *testing.T) *gorm.DB {

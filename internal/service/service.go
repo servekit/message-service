@@ -17,16 +17,17 @@ import (
 
 	"gorm.io/gorm"
 
+	gidconfig "github.com/servekit/gid-service/pkg/config"
 	pb "github.com/servekit/message-service/gen/message/v1"
 	"github.com/servekit/message-service/internal/idempotency"
 	provemail "github.com/servekit/message-service/internal/provider/email"
 	provesms "github.com/servekit/message-service/internal/provider/sms"
 	svcemail "github.com/servekit/message-service/internal/service/email"
 	svcsms "github.com/servekit/message-service/internal/service/sms"
+	gid_service "github.com/servekit/message-service/internal/thirdcall/gid_service"
 	"github.com/servekit/message-service/internal/version"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
-	"github.com/servekit/message-service/pkg/thirdcall"
 
 	"github.com/servekit/go-common/lifecycle"
 )
@@ -39,7 +40,7 @@ type Service struct {
 	mgr *lifecycle.Manager
 
 	db  *gorm.DB
-	gid thirdcall.GIDService
+	gid gid_service.GIDService
 
 	email *svcemail.Service
 	sms   *svcsms.Service
@@ -88,7 +89,11 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		}
 		return nil, err
 	}
-	gid, err := resolveGID(cfg, o.GIDService, mgr)
+	var gidCfg *config.RemoteServiceConfig[*gidconfig.Config]
+	if cfg.ThirdParty != nil {
+		gidCfg = cfg.ThirdParty.GID
+	}
+	gid, err := resolveGID(&o, gidCfg, mgr)
 	if err != nil {
 		if cerr := mgr.Stop(); cerr != nil {
 			slog.Error("rollback after gid resolve failure", "error", cerr)
@@ -154,7 +159,7 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		gid: gid,
 		email: svcemail.New(db, idemChecker, gid, emailRegistry,
 			cfg.Email.Persistence, cfg.Email.Attachment, httpClient),
-		sms: svcsms.New(db, idemChecker, gid, smsRegistry, smsRouter, cfg.SMS.Persistence),
+		sms:       svcsms.New(db, idemChecker, gid, smsRegistry, smsRouter, cfg.SMS.Persistence),
 		startedAt: time.Now().UnixMilli(),
 	}
 
