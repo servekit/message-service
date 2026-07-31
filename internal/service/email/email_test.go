@@ -79,7 +79,7 @@ func getTestGID(t *testing.T) gid_service.GIDService {
 		require.NoError(t, err)
 		testGIDHandler = hdl
 	})
-	return gid_service.NewModule(testGIDHandler, false)
+	return gid_service.NewModule(testGIDHandler)
 }
 
 func setupEmailTestDB(t *testing.T) *gorm.DB {

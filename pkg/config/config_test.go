@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	gidconfig "github.com/servekit/gid-service/pkg/config"
+	"github.com/servekit/message-service/internal/provider/email"
 )
 
 func writeTestConfig(t *testing.T, dir, content string) {
@@ -373,4 +374,57 @@ func TestExampleConfigsAreLoadable(t *testing.T) {
 	require.Equal(t, "module", cfg.ThirdParty.GID.Mode)
 	require.NotEqual(t, "${MESSAGE_SERVICE_DATABASE_PASSWORD}", cfg.Database.Password,
 		"env expansion must have replaced the placeholder")
+}
+
+// TestLoad_EmailAccounts_Decode guards that email.accounts decode into the
+// embedded email.Config.Accounts. Regression: with a pointer embed,
+// mapstructure did not squash, so Email.Config stayed nil and accounts were
+// silently dropped — SendEmail then had no accounts at runtime. Requires the
+// value embed + ,squash on EmailConfig.
+func TestLoad_EmailAccounts_Decode(t *testing.T) {
+	dir := t.TempDir()
+	writeTestConfig(t, dir, `
+server:
+  grpc_addr: ":19092"
+third_party:
+  gid:
+    mode: module
+    config:
+      snowflake:
+        machine_id: 1
+        start_time: "2026-06-01T00:00:00Z"
+email:
+  persistence: true
+  idempotency_ttl: 5m
+  accounts:
+    - name: primary
+      vendor: aliyun
+      host: smtp.example.com
+      port: 587
+      username: user
+      password: pass
+      from: noreply@example.com
+`)
+	chdir(t, dir)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	// Sibling fields on EmailConfig itself still decode alongside the squashed
+	// embedded email.Config (squash must not swallow the outer fields).
+	require.True(t, cfg.Email.Persistence, "email.persistence must still decode alongside squashed embed")
+	require.Equal(t, "5m", cfg.Email.IdempotencyTTL)
+
+	// The squashed embedded email.Config must hold the decoded account. Pre-fix
+	// this was the failure: Email.Config was nil, so accounts were lost.
+	require.Len(t, cfg.Email.Accounts, 1, "email.accounts must decode into the embedded email.Config")
+	require.Equal(t, &email.AccountConfig{
+		Name:     "primary",
+		Vendor:   "aliyun",
+		Host:     "smtp.example.com",
+		Port:     587,
+		Username: "user",
+		Password: "pass",
+		From:     "noreply@example.com",
+	}, cfg.Email.Accounts[0])
 }

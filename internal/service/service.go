@@ -109,7 +109,7 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		return nil, fmt.Errorf("sms config: %w", err)
 	}
 
-	emailRegistry, err := provemail.NewAccountRegistry(cfg.Email.Config)
+	emailRegistry, err := provemail.NewAccountRegistry(&cfg.Email.Config)
 	if err != nil {
 		if cerr := mgr.Stop(); cerr != nil {
 			slog.Error("rollback after email registry failure", "error", cerr)
@@ -173,7 +173,7 @@ func (s *Service) Start() error { return s.mgr.Start() }
 func (s *Service) Stop() error { return s.mgr.Stop() }
 
 // Ping is a health-check RPC. Returns only public, non-sensitive info.
-func (s *Service) Ping(ctx context.Context) (*pb.Pong, error) {
+func (s *Service) Ping(_ context.Context) (*pb.Pong, error) {
 	v := version.Get()
 	return &pb.Pong{
 		Service:   "message-service",

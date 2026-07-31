@@ -48,10 +48,15 @@ type Config struct {
 	IdempotencyKeyPrefix string `default:"msg:idem" mapstructure:"idempotency_key_prefix"`
 }
 
-// EmailConfig is the message-service-level email config. It embeds the
-// provider-level *email.Config (SMTP account definitions, loaded from the
-// same `email.accounts` yaml path via field promotion) and adds the
-// business-level Persistence / IdempotencyTTL / Attachment sub-configs.
+// EmailConfig is the message-service-level email config. It value-embeds the
+// provider-level email.Config (SMTP account definitions) with ,squash so the
+// `email.accounts` yaml path decodes directly into email.Config.Accounts, and
+// adds the business-level Persistence / IdempotencyTTL / Attachment sub-configs.
+//
+// The embed must be a VALUE, not a pointer: mapstructure refuses ,squash on a
+// pointer field ("unsupported type for squash: ptr"), and without squash an
+// anonymous *email.Config would not match the `email.accounts` key — accounts
+// would silently never decode and SendEmail would have no accounts at runtime.
 //
 // yaml shape:
 //
@@ -66,7 +71,7 @@ type Config struct {
 //	    max_inline_bytes: 2097152
 //	    max_total_inline_bytes: 5242880
 type EmailConfig struct {
-	*email.Config
+	email.Config `mapstructure:",squash"`
 	// Persistence controls whether send records are written to the DB.
 	// Defaults to true; set false to skip DB writes (sends only).
 	Persistence bool `default:"true"`
