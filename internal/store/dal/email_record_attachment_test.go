@@ -14,7 +14,7 @@ import (
 
 func setupEmailAttachmentDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := dbx.SetupTestDB(t)
+	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	require.NoError(t, db.AutoMigrate(&models.MessageEmailRecord{}, &models.MessageEmailRecordAttachment{}))
 	return db
 }

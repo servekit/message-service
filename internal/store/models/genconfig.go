@@ -11,18 +11,25 @@ import (
 	"gorm.io/cli/gorm/genconfig"
 )
 
-// MapStringString is a JSONB-compatible map for template parameters.
+// MapStringString is a JSON-compatible map for template parameters.
 type MapStringString map[string]string
 
-// Scan implements sql.Scanner for JSONB.
+// Scan implements sql.Scanner for JSON. Handles both []byte (postgres/mysql)
+// and string (sqlite/modernc) driver return types so the field is portable
+// across all supported dialects.
 func (m *MapStringString) Scan(value any) error {
 	if value == nil {
 		*m = nil
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("failed to unmarshal JSONB value: %v", value)
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("failed to unmarshal JSON value: %v", value)
 	}
 	return jsonx.Unmarshal(bytes, m)
 }
@@ -35,18 +42,24 @@ func (m MapStringString) Value() (driver.Value, error) {
 	return jsonx.Marshal(m)
 }
 
-// StringSlice is a JSONB-compatible string slice for list fields like Cc/Bcc.
+// StringSlice is a JSON-compatible string slice for list fields like Cc/Bcc.
 type StringSlice []string
 
-// Scan implements sql.Scanner for JSONB.
+// Scan implements sql.Scanner for JSON. Handles both []byte (postgres/mysql)
+// and string (sqlite/modernc) driver return types for cross-dialect portability.
 func (s *StringSlice) Scan(value any) error {
 	if value == nil {
 		*s = nil
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("failed to unmarshal JSONB value: %v", value)
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("failed to unmarshal JSON value: %v", value)
 	}
 	return jsonx.Unmarshal(bytes, s)
 }

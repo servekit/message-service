@@ -84,7 +84,7 @@ func getTestGID(t *testing.T) gid_service.GIDService {
 
 func setupEmailTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := dbx.SetupTestDB(t)
+	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	require.NoError(t, db.AutoMigrate(&models.MessageEmailRecord{}, &models.MessageEmailRecordAttachment{}), "auto-migrate should succeed")
 	return db
 }

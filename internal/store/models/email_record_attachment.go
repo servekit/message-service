@@ -23,5 +23,5 @@ type MessageEmailRecordAttachment struct {
 	Inline    bool      `gorm:"not null;default:false"`
 	MimeType  string    `gorm:"size:127;column:mime_type"`
 	SizeBytes int64     `gorm:"column:size_bytes"`
-	CreatedAt time.Time `gorm:"not null;default:now()"`
+	CreatedAt time.Time `gorm:"not null;autoCreateTime"`
 }

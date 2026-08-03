@@ -18,7 +18,7 @@ import (
 
 func setupSMSDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := dbx.SetupTestDB(t)
+	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	err := db.AutoMigrate(&models.MessageSMSRecord{})
 	require.NoError(t, err, "auto-migrate should succeed")
 	return db

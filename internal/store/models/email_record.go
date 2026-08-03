@@ -22,19 +22,19 @@ type MessageEmailRecord struct {
 	// "pay-service"). NOT the end-user/admin id — the caller is responsible
 	// for recording that in its own audit trail.
 	SenderID       string          `gorm:"size:64;column:sender_id;index"`
-	Cc             StringSlice     `gorm:"type:jsonb;column:cc"`
-	Bcc            StringSlice     `gorm:"type:jsonb;column:bcc"`
+	Cc             StringSlice     `gorm:"type:json;column:cc"`
+	Bcc            StringSlice     `gorm:"type:json;column:bcc"`
 	Subject        string          `gorm:"type:text"`
 	Content        string          `gorm:"type:text"`
 	HTMLBody       string          `gorm:"type:text;column:html_body"`
 	ReplyTo        string          `gorm:"size:255;column:reply_to"`
 	TemplateID     string          `gorm:"size:64;column:template_id"`
-	TemplateParams MapStringString `gorm:"type:jsonb;column:template_params"`
+	TemplateParams MapStringString `gorm:"type:json;column:template_params"`
 	ErrorMessage   string          `gorm:"size:1024;column:error_message"`
 	Attempts       int             `gorm:"not null;default:1"`
 	SentAt         sql.NullTime    `gorm:"column:sent_at"`
-	CreatedAt      time.Time       `gorm:"not null;default:now();index"`
-	UpdatedAt      time.Time       `gorm:"not null;default:now()"`
+	CreatedAt      time.Time       `gorm:"not null;autoCreateTime;index"`
+	UpdatedAt      time.Time       `gorm:"not null;autoUpdateTime"`
 	DeletedAt      gorm.DeletedAt  `gorm:"index"`
 }
 

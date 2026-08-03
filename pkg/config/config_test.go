@@ -42,12 +42,14 @@ server:
   grpc_addr: ${TEST_MS_GRPC_ADDR}
   http_addr: ${TEST_MS_HTTP_ADDR}
 database:
-  host: ${TEST_MS_DB_HOST}
-  port: ${TEST_MS_DB_PORT}
-  user: ${TEST_MS_DB_USER}
-  password: ${TEST_MS_DB_PASSWORD}
-  dbname: ${TEST_MS_DB_NAME}
-  sslmode: ${TEST_MS_DB_SSLMODE}
+  driver: ${TEST_MS_DB_DRIVER}
+  postgres:
+    host: ${TEST_MS_DB_HOST}
+    port: ${TEST_MS_DB_PORT}
+    user: ${TEST_MS_DB_USER}
+    password: ${TEST_MS_DB_PASSWORD}
+    dbname: ${TEST_MS_DB_NAME}
+    sslmode: ${TEST_MS_DB_SSLMODE}
 log:
   level: ${TEST_MS_LOG_LEVEL}
   format: ${TEST_MS_LOG_FORMAT}
@@ -66,6 +68,7 @@ third_party:
 
 	setenv(t, "TEST_MS_GRPC_ADDR", ":19092")
 	setenv(t, "TEST_MS_HTTP_ADDR", ":18082")
+	setenv(t, "TEST_MS_DB_DRIVER", "postgres")
 	setenv(t, "TEST_MS_DB_HOST", "postgres")
 	setenv(t, "TEST_MS_DB_PORT", "5432")
 	setenv(t, "TEST_MS_DB_USER", "postgres")
@@ -84,8 +87,8 @@ third_party:
 	require.NoError(t, err)
 	require.Equal(t, ":19092", cfg.Server.GRPCAddr)
 	require.Equal(t, ":18082", cfg.Server.HTTPAddr)
-	require.Equal(t, "postgres", cfg.Database.Host)
-	require.Equal(t, "secret", cfg.Database.Password)
+	require.Equal(t, "postgres", cfg.Database.Postgres.Host)
+	require.Equal(t, "secret", cfg.Database.Postgres.Password)
 	require.Equal(t, "module", cfg.ThirdParty.GID.Mode)
 	require.Equal(t, int64(1), cfg.ThirdParty.GID.Config.Snowflake.MachineID)
 }
@@ -98,12 +101,14 @@ func TestLoad_NoExpandEnv_KeepsLiteral(t *testing.T) {
 server:
   grpc_addr: ":19092"
 database:
-  host: localhost
-  port: 5432
-  user: postgres
-  password: postgres
-  dbname: message_service
-  sslmode: disable
+  driver: postgres
+  postgres:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    dbname: message_service
+    sslmode: disable
 third_party:
   gid:
     mode: module
@@ -117,7 +122,7 @@ third_party:
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, ":19092", cfg.Server.GRPCAddr)
-	require.Equal(t, "localhost", cfg.Database.Host)
+	require.Equal(t, "localhost", cfg.Database.Postgres.Host)
 }
 
 // TestLoad_PersistenceOmitted_DefaultsTrue verifies that a yaml without the
@@ -128,12 +133,14 @@ func TestLoad_PersistenceOmitted_DefaultsTrue(t *testing.T) {
 server:
   grpc_addr: ":19092"
 database:
-  host: localhost
-  port: 5432
-  user: postgres
-  password: postgres
-  dbname: message_service
-  sslmode: disable
+  driver: postgres
+  postgres:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    dbname: message_service
+    sslmode: disable
 third_party:
   gid:
     mode: module
@@ -158,12 +165,14 @@ func TestLoad_PersistenceExplicitFalse(t *testing.T) {
 server:
   grpc_addr: ":19092"
 database:
-  host: localhost
-  port: 5432
-  user: postgres
-  password: postgres
-  dbname: message_service
-  sslmode: disable
+  driver: postgres
+  postgres:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    dbname: message_service
+    sslmode: disable
 third_party:
   gid:
     mode: module
@@ -223,12 +232,14 @@ func TestLoad_IdempotencyKeyPrefix_Default(t *testing.T) {
 server:
   grpc_addr: ":19092"
 database:
-  host: localhost
-  port: 5432
-  user: postgres
-  password: postgres
-  dbname: message_service
-  sslmode: disable
+  driver: postgres
+  postgres:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    dbname: message_service
+    sslmode: disable
 third_party:
   gid:
     mode: module
@@ -272,12 +283,14 @@ func TestLoad_RedisSection(t *testing.T) {
 server:
   grpc_addr: ":19092"
 database:
-  host: localhost
-  port: 5432
-  user: postgres
-  password: postgres
-  dbname: message_service
-  sslmode: disable
+  driver: postgres
+  postgres:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    dbname: message_service
+    sslmode: disable
 redis:
   addr: localhost:6379
   db: 0
@@ -368,11 +381,11 @@ func TestExampleConfigsAreLoadable(t *testing.T) {
 
 	// Spot-check that ${VAR} was actually expanded, not left literal.
 	require.Equal(t, ":19092", cfg.Server.GRPCAddr)
-	require.Equal(t, "postgres", cfg.Database.Host)
-	require.Equal(t, "message_service", cfg.Database.DBName)
+	require.Equal(t, "postgres", cfg.Database.Postgres.Host)
+	require.Equal(t, "message_service", cfg.Database.Postgres.DBName)
 	require.Equal(t, true, cfg.Email.Persistence)
 	require.Equal(t, "module", cfg.ThirdParty.GID.Mode)
-	require.NotEqual(t, "${MESSAGE_SERVICE_DATABASE_PASSWORD}", cfg.Database.Password,
+	require.NotEqual(t, "${MESSAGE_SERVICE_DATABASE_PASSWORD}", cfg.Database.Postgres.Password,
 		"env expansion must have replaced the placeholder")
 }
 

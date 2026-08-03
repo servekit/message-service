@@ -23,12 +23,12 @@ type MessageSMSRecord struct {
 	SenderID       string          `gorm:"size:64;column:sender_id;index"`
 	Content        string          `gorm:"type:text"`
 	TemplateID     string          `gorm:"size:64;column:template_id"`
-	TemplateParams MapStringString `gorm:"type:jsonb;column:template_params"`
+	TemplateParams MapStringString `gorm:"type:json;column:template_params"`
 	ErrorMessage   string          `gorm:"size:1024;column:error_message"`
 	Attempts       int             `gorm:"not null;default:1"`
 	SentAt         sql.NullTime    `gorm:"column:sent_at"`
-	CreatedAt      time.Time       `gorm:"not null;default:now();index"`
-	UpdatedAt      time.Time       `gorm:"not null;default:now()"`
+	CreatedAt      time.Time       `gorm:"not null;autoCreateTime;index"`
+	UpdatedAt      time.Time       `gorm:"not null;autoUpdateTime"`
 	DeletedAt      gorm.DeletedAt  `gorm:"index"`
 }
 

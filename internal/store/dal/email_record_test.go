@@ -18,7 +18,7 @@ import (
 
 func setupEmailDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := dbx.SetupTestDB(t)
+	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	err := db.AutoMigrate(&models.MessageEmailRecord{})
 	require.NoError(t, err, "auto-migrate should succeed")
 	return db

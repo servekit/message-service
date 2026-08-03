@@ -13,12 +13,17 @@ server:
   max_recv_msg_size_bytes: ${MESSAGE_SERVICE_SERVER_MAX_RECV_MSG_SIZE_BYTES}  # 10 MB default; raised from gRPC's 4MB for inline attachment.content
 
 database:
-  host: ${MESSAGE_SERVICE_DATABASE_HOST}
-  port: ${MESSAGE_SERVICE_DATABASE_PORT}
-  user: ${MESSAGE_SERVICE_DATABASE_USER}
-  password: ${MESSAGE_SERVICE_DATABASE_PASSWORD}
-  dbname: ${MESSAGE_SERVICE_DATABASE_DBNAME}
-  sslmode: ${MESSAGE_SERVICE_DATABASE_SSLMODE}
+  driver: ${MESSAGE_SERVICE_DATABASE_DRIVER}              # postgres | mysql | sqlite(空默认 postgres)
+  # docker-compose 只跑 postgres;切 mysql/sqlite 时本地编辑 config.yaml 对应块。
+  # 这里的 ${...} 由 configx 在加载时展开,docker 经 docker-compose.yaml 注入。
+  postgres:
+    host: ${MESSAGE_SERVICE_DATABASE_HOST}
+    port: ${MESSAGE_SERVICE_DATABASE_PORT}
+    user: ${MESSAGE_SERVICE_DATABASE_USER}
+    password: ${MESSAGE_SERVICE_DATABASE_PASSWORD}
+    dbname: ${MESSAGE_SERVICE_DATABASE_DBNAME}
+    sslmode: ${MESSAGE_SERVICE_DATABASE_SSLMODE}
+    # schema: ${MESSAGE_SERVICE_DATABASE_POSTGRES_SCHEMA}  # 可选 search_path
 
 redis:
   addr: ${MESSAGE_SERVICE_REDIS_ADDR}
