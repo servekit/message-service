@@ -10,6 +10,7 @@ import (
 
 	pb "github.com/servekit/message-service/gen/message/v1"
 	provesms "github.com/servekit/message-service/internal/provider/sms"
+	"github.com/servekit/message-service/internal/service/common"
 	"github.com/servekit/message-service/internal/service/utils"
 	"github.com/servekit/message-service/internal/store/dal"
 	"github.com/servekit/message-service/internal/store/models"
@@ -53,7 +54,7 @@ func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.Send
 		}
 	}
 
-	id, err := s.gid.NextID(ctx)
+	id, err := common.NextID(ctx, s.gid)
 	if err != nil {
 		if idemKey != "" {
 			releaseErr := s.idem.Release(context.Background(), "sms", req.GetSenderId(), idemKey)

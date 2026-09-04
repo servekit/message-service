@@ -17,6 +17,7 @@ import (
 
 	"gorm.io/gorm"
 
+	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
 	pb "github.com/servekit/message-service/gen/message/v1"
 	"github.com/servekit/message-service/internal/idempotency"
@@ -24,7 +25,6 @@ import (
 	provesms "github.com/servekit/message-service/internal/provider/sms"
 	svcemail "github.com/servekit/message-service/internal/service/email"
 	svcsms "github.com/servekit/message-service/internal/service/sms"
-	gid_service "github.com/servekit/message-service/internal/thirdcall/gid_service"
 	"github.com/servekit/message-service/internal/version"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
@@ -40,7 +40,7 @@ type Service struct {
 	mgr *lifecycle.Manager
 
 	db  *gorm.DB
-	gid gid_service.GIDService
+	gid gidservice.Service
 
 	email *svcemail.Service
 	sms   *svcsms.Service

@@ -1,6 +1,8 @@
 package email
 
 import (
+	gidv1 "github.com/servekit/gid-service/gen/gid/v1"
+
 	"context"
 	"errors"
 	"fmt"
@@ -15,7 +17,6 @@ import (
 	"github.com/servekit/message-service/internal/provider/email"
 	"github.com/servekit/message-service/internal/store/dal"
 	"github.com/servekit/message-service/internal/store/models"
-	gid_service "github.com/servekit/message-service/internal/thirdcall/gid_service"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/xcodes"
 
@@ -47,15 +48,15 @@ func (m *mockEmailProvider) Send(_ context.Context, _ *email.Message) error {
 	return m.err
 }
 
-// failingGID is a gid_service.GIDService that always errors. Used to exercise
+// failingGID is a gidservice.Service that always errors. Used to exercise
 // the gid.NextID error path in SendEmail / SendSMS.
-type failingGID struct{}
-
-func (failingGID) NextID(context.Context) (int64, error) {
-	return 0, errors.New("gid unavailable")
+type failingGID struct {
+	gidv1.UnimplementedGidServiceServer
 }
 
-func (failingGID) Close() error { return nil }
+func (failingGID) NextID(context.Context, *gidv1.NextIDRequest) (*gidv1.NextIDResponse, error) {
+	return nil, errors.New("gid unavailable")
+}
 
 // --- helpers ---
 
@@ -67,7 +68,7 @@ var testGIDHandler *gidservice.Handler
 // generator is the expensive part); NewModule only wraps. Module mode no
 // longer builds from config — the raw Handler is constructed here, matching
 // how a parent process injects option.WithGIDHandler in production.
-func getTestGID(t *testing.T) gid_service.GIDService {
+func getTestGID(t *testing.T) gidservice.Service {
 	t.Helper()
 	testGIDHandlerOnce.Do(func() {
 		hdl, err := gidservice.NewModule(&gidconfig.Config{
@@ -79,7 +80,7 @@ func getTestGID(t *testing.T) gid_service.GIDService {
 		require.NoError(t, err)
 		testGIDHandler = hdl
 	})
-	return gid_service.NewModule(testGIDHandler)
+	return testGIDHandler
 }
 
 func setupEmailTestDB(t *testing.T) *gorm.DB {

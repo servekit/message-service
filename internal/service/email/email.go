@@ -13,6 +13,7 @@ import (
 
 	pb "github.com/servekit/message-service/gen/message/v1"
 	provemail "github.com/servekit/message-service/internal/provider/email"
+	"github.com/servekit/message-service/internal/service/common"
 	"github.com/servekit/message-service/internal/service/utils"
 	"github.com/servekit/message-service/internal/store/dal"
 	"github.com/servekit/message-service/internal/store/models"
@@ -70,7 +71,7 @@ func (s *Service) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.
 		return nil, xcodes.ErrBadRequest.Wrap(err)
 	}
 
-	id, err := s.gid.NextID(ctx)
+	id, err := common.NextID(ctx, s.gid)
 	if err != nil {
 		if idemKey != "" {
 			releaseErr := s.idem.Release(context.Background(), "email", req.GetSenderId(), idemKey)

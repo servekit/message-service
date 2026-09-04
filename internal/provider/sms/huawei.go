@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/servekit/go-common/jsonx"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/def"
 	hwsms "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/smsapi/v1"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/smsapi/v1/model"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/smsapi/v1/region"
+	"github.com/servekit/go-common/jsonx"
 
 	pb "github.com/servekit/message-service/gen/message/v1"
 )

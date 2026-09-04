@@ -1,0 +1,12 @@
+go 1.26.1
+
+use .
+
+// Local source substitution for the poc/unify-thirdcall branches of the
+// upstream provider and go-common. Gitignored; per-developer, never committed.
+replace (
+	github.com/servekit/gid-service => ../gid-service
+	github.com/servekit/go-common => ../go-common
+)
+
+replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20260729162451-8efbd57d26e0

@@ -4,9 +4,9 @@
 package sms
 
 import (
+	gidservice "github.com/servekit/gid-service/pkg"
 	"github.com/servekit/message-service/internal/idempotency"
 	provesms "github.com/servekit/message-service/internal/provider/sms"
-	gid_service "github.com/servekit/message-service/internal/thirdcall/gid_service"
 
 	"gorm.io/gorm"
 )
@@ -16,7 +16,7 @@ import (
 type Service struct {
 	db          *gorm.DB
 	idem        idempotency.Checker
-	gid         gid_service.GIDService
+	gid         gidservice.Service
 	smsRegistry *provesms.AccountRegistry
 	smsRouter   *provesms.Router // nil when no routes configured
 
@@ -31,7 +31,7 @@ type Service struct {
 func New(
 	db *gorm.DB,
 	idem idempotency.Checker,
-	gid gid_service.GIDService,
+	gid gidservice.Service,
 	smsRegistry *provesms.AccountRegistry,
 	smsRouter *provesms.Router,
 	persistence bool,
