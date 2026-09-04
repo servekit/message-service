@@ -29,7 +29,9 @@ import (
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
 
+	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/lifecycle"
+	"github.com/servekit/go-common/redisx"
 )
 
 // Service holds message-service business state: one subpackage instance per
@@ -65,7 +67,7 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 	// Redis is required for service-level idempotency. Resolve first —
 	// it has no dependencies, and placing it before resolveDB keeps the
 	// rollback chain simple (nothing prior to roll back on its failure).
-	redisClient, err := resolveRedis(cfg, o.Redis, mgr)
+	redisClient, err := redisx.Connect(cfg.Redis, o.Redis, mgr)
 	if err != nil {
 		if cerr := mgr.Stop(); cerr != nil {
 			slog.Error("rollback after redis resolve failure", "error", cerr)
@@ -82,7 +84,7 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		SMSTTL:    cfg.SMS.IdempotencyTTLDuration(),
 	})
 
-	db, err := resolveDB(cfg, o.DB, mgr)
+	db, err := dbx.Connect(cfg.Database, o.DB, mgr)
 	if err != nil {
 		if cerr := mgr.Stop(); cerr != nil {
 			slog.Error("rollback after db resolve failure", "error", cerr)

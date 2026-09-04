@@ -3,19 +3,15 @@ package service
 import (
 	"fmt"
 
-	"github.com/redis/go-redis/v9"
 	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
-	"gorm.io/gorm"
 
 	pb "github.com/servekit/message-service/gen/message/v1"
 	"github.com/servekit/message-service/internal/provider/sms"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
 
-	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/lifecycle"
-	"github.com/servekit/go-common/redisx"
 )
 
 // --- config cooking (string → enum) ---
@@ -91,20 +87,6 @@ func parseSMSVendorName(s string) (pb.SmsVendor, error) {
 }
 
 // --- resource resolution (DI or build) ---
-
-// resolveRedis returns the *redis.Client to use: an injected one as-is
-// (caller owns lifecycle), otherwise built from cfg with a Stopper registered
-// on mgr via redisx.Connect.
-func resolveRedis(cfg *config.Config, injected *redis.Client, mgr *lifecycle.Manager) (*redis.Client, error) {
-	return redisx.Connect(cfg.Redis, injected, mgr)
-}
-
-// resolveDB returns the *gorm.DB to use: an injected one as-is (caller owns
-// lifecycle), otherwise built from cfg with a Stopper registered on mgr via
-// dbx.Connect.
-func resolveDB(cfg *config.Config, injected *gorm.DB, mgr *lifecycle.Manager) (*gorm.DB, error) {
-	return dbx.Connect(cfg.Database, injected, mgr)
-}
 
 // resolveGID returns the gid dependency. Construction delegates to
 // gidservice.Connect, which owns the mode switch and lifecycle registration;
