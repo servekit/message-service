@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/servekit/go-common/configx"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +90,7 @@ third_party:
 	require.Equal(t, ":18082", cfg.Server.HTTPAddr)
 	require.Equal(t, "postgres", cfg.Database.Postgres.Host)
 	require.Equal(t, "secret", cfg.Database.Postgres.Password)
-	require.Equal(t, "module", cfg.ThirdParty.GID.Mode)
+	require.Equal(t, configx.ModeModule, cfg.ThirdParty.GID.Mode)
 	require.Equal(t, int64(1), cfg.ThirdParty.GID.Config.Snowflake.MachineID)
 }
 
@@ -384,7 +385,7 @@ func TestExampleConfigsAreLoadable(t *testing.T) {
 	require.Equal(t, "postgres", cfg.Database.Postgres.Host)
 	require.Equal(t, "message_service", cfg.Database.Postgres.DBName)
 	require.Equal(t, true, cfg.Email.Persistence)
-	require.Equal(t, "module", cfg.ThirdParty.GID.Mode)
+	require.Equal(t, configx.ModeModule, cfg.ThirdParty.GID.Mode)
 	require.NotEqual(t, "${MESSAGE_SERVICE_DATABASE_PASSWORD}", cfg.Database.Postgres.Password,
 		"env expansion must have replaced the placeholder")
 }
