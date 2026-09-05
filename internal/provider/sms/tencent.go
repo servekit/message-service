@@ -9,7 +9,7 @@ import (
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	tcsms "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/sms/v20190711"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // TencentConfig holds the configuration for the Tencent Cloud SMS provider.

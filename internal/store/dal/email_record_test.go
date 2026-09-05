@@ -8,7 +8,7 @@ import (
 
 	"github.com/servekit/message-service/internal/store/models"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 
 	"github.com/servekit/go-common/dbx"
 	"github.com/stretchr/testify/assert"

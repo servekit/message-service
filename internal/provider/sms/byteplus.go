@@ -7,7 +7,7 @@ import (
 	bpsms "github.com/byteplus-sdk/byteplus-sdk-golang/service/sms"
 	"github.com/servekit/go-common/jsonx"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // ByteplusConfig holds the configuration for the BytePlus SMS provider

@@ -13,7 +13,6 @@ services:
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     environment:
       - MESSAGE_SERVICE_SERVER_GRPC_ADDR=${MESSAGE_SERVICE_SERVER_GRPC_ADDR:-:19092}
-      - MESSAGE_SERVICE_SERVER_HTTP_ADDR=${MESSAGE_SERVICE_SERVER_HTTP_ADDR:-:18082}
       - MESSAGE_SERVICE_LOG_LEVEL=${MESSAGE_SERVICE_LOG_LEVEL:-info}
       - MESSAGE_SERVICE_DATABASE_DRIVER=${MESSAGE_SERVICE_DATABASE_DRIVER:-postgres}
       - MESSAGE_SERVICE_DATABASE_HOST=${MESSAGE_SERVICE_DATABASE_HOST:-postgres}
@@ -80,7 +79,6 @@ services:
       - VAR=${VAR:-}
     ports:
       - "${HOST_GRPC_PORT:-19092}:19092"
-      - "${HOST_HTTP_PORT:-18082}:18082"
     depends_on:
       postgres:
         condition: service_healthy

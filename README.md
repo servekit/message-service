@@ -4,7 +4,7 @@
 
 支持三种使用方式(与 user-service 一致):
 
-- **`Server`**(`pkg/server.go`)—— 独立微服务部署,gRPC server 监听 `:19092`,grpc-gateway 监听 `:18082`
+- **`Server`**(`pkg/server.go`)—— 独立微服务部署,gRPC server 监听 `:19092`。**纯 gRPC 服务**,不监听 HTTP;对外 HTTP 面由网关(当前为 testkit-service)提供
 - **`Module`**(`pkg/module.go`)—— in-process 使用,父服务直接 import,无网络开销,注入已有 DB/Redis 连接
 - **`Client`**(`pkg/client.go`)—— 远程 gRPC 客户端,embed `pb.MessageServiceClient`,所有 RPC 方法直接可用
 
@@ -45,7 +45,7 @@
 
 | 命令 | 作用 |
 |---|---|
-| `./message-service` 或 `./message-service serve` | 启动 gRPC + HTTP 服务(默认) |
+| `./message-service` 或 `./message-service serve` | 启动 gRPC 服务(默认) |
 | `./message-service migrate` | 执行 GORM AutoMigrate 后退出 |
 | 其他 | 打印用法,exit 2 |
 
@@ -177,7 +177,7 @@ import msgsrv "message-service/pkg"
 srv, err := msgsrv.NewServer(cfg, msgsrv.WithServiceOptions(opts...))
 if err != nil { return err }
 defer srv.Stop()
-return srv.Start()  // blocks; listens :19092 + :18082
+return srv.Start()  // blocks; listens :19092
 ```
 
 ### 2. Module — in-process(无网络开销)

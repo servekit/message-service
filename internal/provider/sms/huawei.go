@@ -11,7 +11,7 @@ import (
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/smsapi/v1/region"
 	"github.com/servekit/go-common/jsonx"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // HuaweiConfig holds the configuration for the Huawei Cloud SMS provider.

@@ -10,7 +10,7 @@
 
 ### pkg/ 三种使用方式（与 user-service 一致）
 
-- **`Server`**（`pkg/server.go`）：独立微服务部署。封装 gRPC server + grpc-gateway，注册 interceptors，监听 `:9000`/`:8080`
+- **`Server`**（`pkg/server.go`）：独立微服务部署。封装 gRPC server，注册 interceptors，监听 `:19092`。纯 gRPC：不启 gateway，对外 HTTP 面由网关（testkit）提供
 - **`Module`**（`pkg/module.go`）：in-process 使用。其他 Go 服务直接 import，无网络开销，注入已有的 DB/Redis 连接
 - **`Client`**（`pkg/client.go`）：远程 gRPC 客户端。embed `pb.MessageServiceClient`，所有 RPC 方法直接可用
 
@@ -66,8 +66,8 @@
 ### gRPC / Proto
 
 - Proto 定义在 `api/proto/message/v1/message.proto`
-- 使用 `protoc` + `grpc-gateway` 生成代码到 `gen/` 目录；openapiv2 插件另从 `google.api.http` 注解派生 Swagger 2.0 文档到 `api/swagger/`（供前端/客户端消费），都由 `make proto` 产出
-- gRPC server 监听 `:9000`，grpc-gateway 监听 `:8080`
+- 生成代码来自 `github.com/servekit/api/gen/go`（`replace ../api/gen/go`）；改 proto 在 `../api` 仓库做并 `make gen`，本仓库 `go mod tidy` 后即可用
+- gRPC server 监听 `:19092`；不监听 HTTP（对外 HTTP 面由网关 testkit-service 提供）
 - **有限集合的字段必须使用 proto enum，不用 string**。当前已定义的枚举：
   - `MessageStatus`（UNSPECIFIED / PENDING / SENT / FAILED）
     - `SENT` 表示 vendor 同步接受请求（SMTP server OK / SMS vendor API 返回 OK），**不代表**用户最终收到。SMS 异步送达状态当前不跟踪。
@@ -152,8 +152,6 @@ go test -race -coverprofile=coverage.out ./...
 
 ```
 message-service/
-├── api/proto/message/       # Protobuf 定义
-├── api/swagger/             # buf 生成的 Swagger/OpenAPI 文档（供前端/客户端消费）
 ├── cmd/server/              # 启动入口：serve（默认）+ migrate 子命令（单二进制）
 ├── gen/                     # protoc 生成代码
 ├── internal/

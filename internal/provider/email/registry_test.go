@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // fakeProvider is a registry-level test AccountProvider that counts Send

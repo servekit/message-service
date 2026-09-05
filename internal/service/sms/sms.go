@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"time"
 
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	gidservice "github.com/servekit/gid-service/pkg"
-	pb "github.com/servekit/message-service/gen/message/v1"
 	provesms "github.com/servekit/message-service/internal/provider/sms"
 	"github.com/servekit/message-service/internal/service/utils"
 	"github.com/servekit/message-service/internal/store/dal"

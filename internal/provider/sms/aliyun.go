@@ -9,7 +9,7 @@ import (
 	"github.com/alibabacloud-go/tea/dara"
 	"github.com/servekit/go-common/jsonx"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // AliyunConfig holds the configuration for the Aliyun SMS provider.

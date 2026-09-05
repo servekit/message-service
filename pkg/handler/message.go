@@ -1,4 +1,4 @@
-// Package handler implements message.v1.MessageServiceServer as a thin shim
+// Package handler implements messaging.v1.MessageServiceServer as a thin shim
 // over internal/service. Each method is a one-line delegation — service
 // takes the proto request directly (per project convention: avoid unnecessary
 // struct allocation; convert at the store boundary instead).
@@ -14,13 +14,14 @@ package handler
 import (
 	"context"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	commonv1 "github.com/servekit/api/gen/go/common/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	"github.com/servekit/message-service/internal/service"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// Handler implements message.v1.MessageServiceServer.
+// Handler implements messaging.v1.MessageServiceServer.
 //
 // It holds no mutable state — the embedded *service.Service owns all
 // business state and lifecycle. Construction-time injection only.
@@ -47,7 +48,7 @@ func (h *Handler) Start() error { return h.svc.Start() }
 func (h *Handler) Stop() error { return h.svc.Stop() }
 
 // Ping is a health-check RPC.
-func (h *Handler) Ping(ctx context.Context, _ *emptypb.Empty) (*pb.Pong, error) {
+func (h *Handler) Ping(ctx context.Context, _ *emptypb.Empty) (*commonv1.Pong, error) {
 	return h.svc.Ping(ctx)
 }
 

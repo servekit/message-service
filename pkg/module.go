@@ -3,7 +3,7 @@
 package messageservice
 
 import (
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	"github.com/servekit/message-service/internal/service"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/handler"

@@ -6,7 +6,7 @@ import (
 	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	"github.com/servekit/message-service/internal/provider/sms"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"

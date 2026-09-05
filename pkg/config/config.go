@@ -113,10 +113,9 @@ type RouteTarget struct {
 	Account string
 }
 
-// ServerConfig holds gRPC and HTTP server addresses plus transport limits.
+// ServerConfig holds the gRPC server address plus transport limits.
 type ServerConfig struct {
 	GRPCAddr string `default:":19092"`
-	HTTPAddr string `default:":18082"`
 	// MaxRecvMsgSizeBytes is the gRPC server MaxRecvMsgSize. Raised from
 	// gRPC's 4MB default to accommodate inline attachment.content payloads.
 	MaxRecvMsgSizeBytes int `default:"10485760" mapstructure:"max_recv_msg_size_bytes"`

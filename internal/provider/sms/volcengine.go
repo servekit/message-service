@@ -7,7 +7,7 @@ import (
 	"github.com/servekit/go-common/jsonx"
 	vocsms "github.com/volcengine/volc-sdk-golang/service/sms"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // VolcengineConfig holds the configuration for the Volcengine SMS provider.

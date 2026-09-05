@@ -8,7 +8,7 @@ import (
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/smsapi/v1/model"
 	"github.com/stretchr/testify/require"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // huaweiMockSender is a mock implementation of huaweiSmsSender.

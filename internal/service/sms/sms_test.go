@@ -1,7 +1,7 @@
 package sms
 
 import (
-	gidv1 "github.com/servekit/gid-service/gen/gid/v1"
+	gidv1 "github.com/servekit/api/gen/go/gid/v1"
 
 	"context"
 	"errors"
@@ -16,7 +16,7 @@ import (
 	"github.com/servekit/message-service/internal/store/models"
 	"github.com/servekit/message-service/pkg/xcodes"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/redisx"

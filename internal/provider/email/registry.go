@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // Config is the email provider configuration. Each account carries its own

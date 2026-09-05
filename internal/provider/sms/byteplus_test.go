@@ -8,7 +8,7 @@ import (
 	bpsms "github.com/byteplus-sdk/byteplus-sdk-golang/service/sms"
 	"github.com/stretchr/testify/require"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // byteplusMockSender is a mock implementation of byteplusSmsSender.

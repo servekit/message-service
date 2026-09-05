@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // Config is the cooked config: vendor keys and route target vendors are proto

@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"time"
 
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	gidservice "github.com/servekit/gid-service/pkg"
-	pb "github.com/servekit/message-service/gen/message/v1"
 	provemail "github.com/servekit/message-service/internal/provider/email"
 	"github.com/servekit/message-service/internal/service/utils"
 	"github.com/servekit/message-service/internal/store/dal"

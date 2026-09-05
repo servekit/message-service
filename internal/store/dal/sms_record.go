@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	"github.com/servekit/message-service/internal/store/generated"
 	"github.com/servekit/message-service/internal/store/models"
 	"github.com/servekit/message-service/pkg/xcodes"

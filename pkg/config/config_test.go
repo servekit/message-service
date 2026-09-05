@@ -41,7 +41,6 @@ func TestLoad_ExpandEnv_VerifiesDockerConfigShape(t *testing.T) {
 	writeTestConfig(t, dir, `
 server:
   grpc_addr: ${TEST_MS_GRPC_ADDR}
-  http_addr: ${TEST_MS_HTTP_ADDR}
 database:
   driver: ${TEST_MS_DB_DRIVER}
   postgres:
@@ -68,7 +67,6 @@ third_party:
 	chdir(t, dir)
 
 	setenv(t, "TEST_MS_GRPC_ADDR", ":19092")
-	setenv(t, "TEST_MS_HTTP_ADDR", ":18082")
 	setenv(t, "TEST_MS_DB_DRIVER", "postgres")
 	setenv(t, "TEST_MS_DB_HOST", "postgres")
 	setenv(t, "TEST_MS_DB_PORT", "5432")
@@ -87,7 +85,6 @@ third_party:
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, ":19092", cfg.Server.GRPCAddr)
-	require.Equal(t, ":18082", cfg.Server.HTTPAddr)
 	require.Equal(t, "postgres", cfg.Database.Postgres.Host)
 	require.Equal(t, "secret", cfg.Database.Postgres.Password)
 	require.Equal(t, configx.ModeModule, cfg.ThirdParty.GID.Mode)

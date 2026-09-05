@@ -16,9 +16,10 @@ import (
 
 	"gorm.io/gorm"
 
+	commonv1 "github.com/servekit/api/gen/go/common/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
-	pb "github.com/servekit/message-service/gen/message/v1"
 	"github.com/servekit/message-service/internal/idempotency"
 	provemail "github.com/servekit/message-service/internal/provider/email"
 	provesms "github.com/servekit/message-service/internal/provider/sms"
@@ -163,9 +164,9 @@ func (s *Service) Start() error { return s.mgr.Start() }
 func (s *Service) Stop() error { return s.mgr.Stop() }
 
 // Ping is a health-check RPC. Returns only public, non-sensitive info.
-func (s *Service) Ping(_ context.Context) (*pb.Pong, error) {
+func (s *Service) Ping(_ context.Context) (*commonv1.Pong, error) {
 	v := version.Get()
-	return &pb.Pong{
+	return &commonv1.Pong{
 		Service:   "message-service",
 		Version:   v.Version,
 		GitCommit: v.GitCommit,

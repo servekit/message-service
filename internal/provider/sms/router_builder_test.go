@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 func TestBuildRouter_emptyConfig(t *testing.T) {

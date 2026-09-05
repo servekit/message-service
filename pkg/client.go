@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	commonv1 "github.com/servekit/api/gen/go/common/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -48,7 +49,7 @@ func NewClient(target string, opts ...grpc.DialOption) (*Client, error) {
 func (c *Client) Close() error { return c.conn.Close() }
 
 // Ping delegates to the remote message-service.
-func (c *Client) Ping(ctx context.Context, in *emptypb.Empty) (*pb.Pong, error) {
+func (c *Client) Ping(ctx context.Context, in *emptypb.Empty) (*commonv1.Pong, error) {
 	return c.cli.Ping(ctx, in)
 }
 

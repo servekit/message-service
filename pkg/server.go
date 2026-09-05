@@ -10,7 +10,7 @@ import (
 	"github.com/servekit/go-common/grpcx"
 	"github.com/servekit/go-common/signalx"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 	"github.com/servekit/message-service/internal/service"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/handler"
@@ -64,8 +64,7 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 
 	grpcSrv := grpcx.New(
 		&grpcx.ServerConfig{
-			GRPCAddr:    cfg.Server.GRPCAddr,
-			GatewayAddr: cfg.Server.HTTPAddr,
+			GRPCAddr: cfg.Server.GRPCAddr,
 			// Raise gRPC MaxRecvMsgSize to accommodate inline attachment
 			// payloads (attachment.content). The hard cap on inline bytes
 			// is enforced at the service layer (EmailConfig.Attachment).
@@ -74,7 +73,7 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 			},
 		},
 		func(s *grpc.Server) { pb.RegisterMessageServiceServer(s, hdl) },
-		pb.RegisterMessageServiceHandlerFromEndpoint,
+		nil, // no HTTP gateway — gRPC-only service
 		grpcx.LoggingInterceptor,
 		grpcx.ErrorInterceptor,
 		protovalidate_middleware.UnaryServerInterceptor(validator),

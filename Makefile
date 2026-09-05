@@ -52,10 +52,6 @@ migrate:
 	@test -f config.yaml || cp config.example.yaml config.yaml
 	go run ./$(CMD_DIR) migrate
 
-## proto: Generate protobuf code with buf
-proto:
-	buf generate
-
 ## tidy: Run go mod tidy
 tidy:
 	go mod tidy

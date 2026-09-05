@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // AccountProvider is the interface vendor implementations satisfy. It carries

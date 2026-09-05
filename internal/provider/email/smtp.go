@@ -8,7 +8,7 @@ import (
 
 	gomail "github.com/wneessen/go-mail"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // SMTPConfig holds the configuration for the SMTP provider.

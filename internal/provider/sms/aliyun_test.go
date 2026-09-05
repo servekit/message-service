@@ -9,7 +9,7 @@ import (
 	"github.com/alibabacloud-go/tea/dara"
 	"github.com/stretchr/testify/require"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // aliyunMockSender is a mock implementation of aliyunSmsSender.

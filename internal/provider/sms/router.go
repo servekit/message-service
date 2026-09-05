@@ -7,7 +7,7 @@ import (
 
 	"github.com/nyaruka/phonenumbers"
 
-	pb "github.com/servekit/message-service/gen/message/v1"
+	pb "github.com/servekit/api/gen/go/messaging/v1"
 )
 
 // Route maps a country to its SMS route targets.
