@@ -1000,12 +1000,12 @@
         },
         "url": {
           "type": "string",
-          "description": "url is the HTTP or HTTPS URL of the attachment content. Service fetches\nthe bytes at send time. Mutually exclusive with content — exactly one of\nthe two must be set. Service rejects non-http(s) schemes (file://, ftp://,\ngopher://, etc.) to mitigate SSRF; the HTTP client does not follow\nredirects."
+          "description": "url is the HTTP or HTTPS URL of the attachment content — a\ncaller-managed reference (typically an object-storage download link).\nmessage-service does NOT fetch it and does NOT embed it into the email:\ncallers render the download link into html_body themselves; message-service\nonly persists the reference for record queries. Non-http(s) schemes are\nrejected defensively (file://, ftp://, gopher://, etc.)."
         },
         "content": {
           "type": "string",
           "format": "byte",
-          "description": "content is the raw attachment bytes supplied inline. Mutually exclusive\nwith url — exactly one of the two must be set. Bounded by\nattachment.max_inline_bytes (single attachment) and\nattachment.max_total_inline_bytes (sum across the request). Attachments\nexceeding these limits must use url instead."
+          "description": "content is the raw attachment bytes supplied inline — embedded as a real\nMIME part. Bounded by attachment.max_inline_bytes (single attachment)\nand attachment.max_total_inline_bytes (sum across the request).\nMay be set together with url (content embeds; url is kept as record\nmetadata). Larger files must use url references instead."
         },
         "inline": {
           "type": "boolean",
@@ -1535,7 +1535,7 @@
             "type": "object",
             "$ref": "#/definitions/v1EmailAttachment"
           },
-          "description": "attachments is optional. LINK attachments augment html_body; MIME\nattachments are downloaded and added as real MIME parts. Mixed lists\nare allowed — each attachment carries its own kind."
+          "description": "attachments is optional. content attachments are embedded as real MIME\nparts; url-only attachments are pure references (caller-managed download\nlinks, rendered into html_body by the caller) whose metadata is persisted\nfor record queries. Mixed lists are allowed."
         }
       },
       "description": "SendEmailRequest is the request to send an email."

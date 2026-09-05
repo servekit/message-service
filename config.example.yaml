@@ -50,8 +50,8 @@ email:
       from: ${MESSAGE_SERVICE_EMAIL_PRIMARY_FROM}
 
   attachment:
-    fetch_timeout: ${MESSAGE_SERVICE_EMAIL_ATTACHMENT_FETCH_TIMEOUT}
-    max_bytes: ${MESSAGE_SERVICE_EMAIL_ATTACHMENT_MAX_BYTES}                        # 10 MB
+    # url attachments are pure references (never fetched), so only the
+    # inline-content caps remain.
     max_inline_bytes: ${MESSAGE_SERVICE_EMAIL_ATTACHMENT_MAX_INLINE_BYTES}          # 2 MB
     max_total_inline_bytes: ${MESSAGE_SERVICE_EMAIL_ATTACHMENT_MAX_TOTAL_INLINE_BYTES} # 5 MB
 

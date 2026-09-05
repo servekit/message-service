@@ -3,11 +3,8 @@ package email
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"time"
 
@@ -82,12 +79,14 @@ func (s *Service) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.
 		return nil, xcodes.ErrInternal.Wrap(err)
 	}
 
-	// Attachment processing: resolve each attachment's bytes (inline content
-	// or URL fetch) and wrap as MIME parts. htmlBody is passed through
-	// unchanged — message-service never injects attachment links into the
-	// body; callers render their own links/images inline.
+	// Attachment processing: wrap inline-content attachments as MIME parts.
+	// url-only attachments are pure references (caller-managed download
+	// links, e.g. OSS) — not fetched, not embedded; their metadata is
+	// persisted for record queries. htmlBody is passed through unchanged —
+	// message-service never injects attachment links into the body; callers
+	// render their own links/images inline.
 	htmlBody := req.GetHtmlBody()
-	mimeAtts, err := s.processAttachments(ctx, req.GetAttachments())
+	mimeAtts, err := s.processAttachments(req.GetAttachments())
 	if err != nil {
 		if idemKey != "" {
 			releaseErr := s.idem.Release(context.Background(), "email", req.GetSenderId(), idemKey)
@@ -443,20 +442,19 @@ func (s *Service) persistEmailRecord(ctx context.Context, id int64, req *pb.Send
 	}
 }
 
-// processAttachments resolves bytes for every attachment (preferring inline
-// content when set, falling back to URL fetch) and wraps each as a MIME
-// part. htmlBody is the caller's responsibility — message-service never
-// injects attachment links into the body; callers render their own
-// <a href>/<img src> inline.
+// processAttachments wraps every inline-content attachment as a MIME part.
+// url-only attachments are reference metadata (the "large attachment"
+// pattern: the caller uploads to object storage and renders a download link
+// into html_body itself) — they are neither fetched nor embedded, so this
+// function has no HTTP surface at all.
 //
-// Any failure aborts the whole send — no partial-send semantics.
+// Any violation aborts the whole send — no partial-send semantics.
 //
-// Size contract:
-//   - inline content: per-attachment cap (attachmentCfg.MaxInlineBytes) and
-//     per-request sum cap (attachmentCfg.MaxTotalInlineBytes). Exceeding either
-//     returns ErrAttachmentTooLarge with a hint to switch to url.
-//   - url fetch: hard cap (attachmentCfg.MaxBytes), enforced in fetchAttachmentBytes.
-func (s *Service) processAttachments(ctx context.Context, atts []*pb.EmailAttachment) ([]*provemail.Attachment, error) {
+// Size contract (inline content only): per-attachment cap
+// (attachmentCfg.MaxInlineBytes) and per-request sum cap
+// (attachmentCfg.MaxTotalInlineBytes). Exceeding either returns
+// ErrAttachmentTooLarge.
+func (s *Service) processAttachments(atts []*pb.EmailAttachment) ([]*provemail.Attachment, error) {
 	if len(atts) == 0 {
 		return nil, nil
 	}
@@ -464,86 +462,31 @@ func (s *Service) processAttachments(ctx context.Context, atts []*pb.EmailAttach
 	var totalInline int64
 	out := make([]*provemail.Attachment, 0, len(atts))
 	for i, a := range atts {
-		var bytes []byte
-		if len(a.GetContent()) > 0 {
-			// Inline content path — no fetch, no SSRF surface. Bounded by
-			// both the per-attachment and per-request inline caps; anything
-			// larger must use url.
-			if n := int64(len(a.GetContent())); n > s.attachment.MaxInlineBytes {
-				return nil, xcodes.ErrAttachmentTooLarge.Wrapf(nil,
-					"attachment[%d] %s: content size %d exceeds inline limit %d (use url instead)",
-					i, a.GetFilename(), n, s.attachment.MaxInlineBytes)
-			}
-			totalInline += int64(len(a.GetContent()))
-			if totalInline > s.attachment.MaxTotalInlineBytes {
-				return nil, xcodes.ErrAttachmentTooLarge.Wrapf(nil,
-					"total inline content %d exceeds per-request limit %d (use url for some attachments)",
-					totalInline, s.attachment.MaxTotalInlineBytes)
-			}
-			bytes = a.GetContent()
-		} else {
-			// URL fetch path.
-			fetched, err := s.fetchAttachmentBytes(ctx, a.GetUrl(), a.GetSizeBytes())
-			if err != nil {
-				// Size violations are caller-side (413); preserve their category so the
-				// gRPC→HTTP gateway maps to the right status. Other failures (HTTP transport,
-				// non-2xx, etc.) are server-side (502).
-				if errors.Is(err, xcodes.ErrAttachmentTooLarge.New()) {
-					return nil, xcodes.ErrAttachmentTooLarge.Wrapf(err, "attachment[%d] %s", i, a.GetFilename())
-				}
-				return nil, xcodes.ErrAttachmentFetchFailed.Wrapf(err, "attachment[%d] %s", i, a.GetFilename())
-			}
-			bytes = fetched
+		if len(a.GetContent()) == 0 {
+			// url-only reference — nothing to embed; metadata persistence in
+			// persistEmailRecord covers it.
+			continue
+		}
+		if n := int64(len(a.GetContent())); n > s.attachment.MaxInlineBytes {
+			return nil, xcodes.ErrAttachmentTooLarge.Wrapf(nil,
+				"attachment[%d] %s: content size %d exceeds inline limit %d (use a url reference instead)",
+				i, a.GetFilename(), n, s.attachment.MaxInlineBytes)
+		}
+		totalInline += int64(len(a.GetContent()))
+		if totalInline > s.attachment.MaxTotalInlineBytes {
+			return nil, xcodes.ErrAttachmentTooLarge.Wrapf(nil,
+				"total inline content %d exceeds per-request limit %d (use url references for some attachments)",
+				totalInline, s.attachment.MaxTotalInlineBytes)
 		}
 		out = append(out, &provemail.Attachment{
 			Filename:  a.GetFilename(),
-			Content:   bytes,
+			Content:   a.GetContent(),
 			MimeType:  a.GetMimeType(),
 			Inline:    a.GetInline(),
 			ContentID: a.GetFilename(), // simple CID = filename; service layer owns naming
 		})
 	}
 	return out, nil
-}
-
-// fetchAttachmentBytes downloads the rawURL with a hard size cap. sizeHint
-// (from request.size_bytes) is checked against Content-Length first as an
-// optimization; a second check runs after the read using a LimitedReader so
-// chunked-encoding responses (Content-Length == -1) are still bounded.
-func (s *Service) fetchAttachmentBytes(ctx context.Context, rawURL string, sizeHint int64) ([]byte, error) {
-	maxBytes := s.attachment.MaxBytes
-	if maxBytes <= 0 {
-		return nil, xcodes.ErrInternal.New("attachment size limit not configured")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
-	if err != nil {
-		return nil, xcodes.ErrAttachmentFetchFailed.Wrap(err)
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, xcodes.ErrAttachmentFetchFailed.Wrap(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, xcodes.ErrAttachmentFetchFailed.Wrapf(nil, "http status %d", resp.StatusCode)
-	}
-	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
-		return nil, xcodes.ErrAttachmentTooLarge.Wrapf(nil, "content-length %d exceeds size limit %d", resp.ContentLength, maxBytes)
-	}
-	if sizeHint > 0 && sizeHint > maxBytes {
-		return nil, xcodes.ErrAttachmentTooLarge.Wrapf(nil, "size_hint %d exceeds size limit %d", sizeHint, maxBytes)
-	}
-
-	limited := &io.LimitedReader{R: resp.Body, N: maxBytes + 1}
-	body, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, xcodes.ErrAttachmentFetchFailed.Wrap(err)
-	}
-	if int64(len(body)) > maxBytes {
-		return nil, xcodes.ErrAttachmentTooLarge.New(fmt.Sprintf("body exceeded size limit %d", maxBytes))
-	}
-	return body, nil
 }
 
 // loadEmailRecordProtos converts a slice of model records to proto records,
@@ -646,9 +589,12 @@ func emailAttachmentsToProto(rows []*models.MessageEmailRecordAttachment) []*pb.
 // validateSendEmailRequest (defense-in-depth for module-mode calls that bypass
 // the protovalidate interceptor). It verifies, per attachment:
 //   - filename is set
-//   - exactly one of url / content is set (XOR — both or neither is rejected)
-//   - when url is set, scheme is http(s) (SSRF mitigation — rejects file://,
-//     ftp://, gopher://, etc.)
+//   - at least one of url / content is set (url-only = caller-managed
+//     download reference; content-only = inline MIME part; both is allowed —
+//     content embeds while url is kept as record metadata)
+//   - when url is set, scheme is http(s) — the url ends up in caller-rendered
+//     download links and stored records, so non-web schemes are rejected
+//     defensively even though the service never fetches it
 //
 // Byte-size caps are NOT enforced here — they live in processAttachments
 // where the Service config is available.
@@ -665,8 +611,8 @@ func validateAttachments(atts []*pb.EmailAttachment) error {
 		}
 		hasURL := a.GetUrl() != ""
 		hasContent := len(a.GetContent()) > 0
-		if hasURL == hasContent {
-			return xcodes.ErrInvalidAttachment.Wrapf(nil, "attachment[%d]: exactly one of url or content must be set", i)
+		if !hasURL && !hasContent {
+			return xcodes.ErrInvalidAttachment.Wrapf(nil, "attachment[%d]: at least one of url or content must be set", i)
 		}
 		if hasURL {
 			parsed, err := url.Parse(a.GetUrl())

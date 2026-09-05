@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -36,15 +34,17 @@ import (
 // --- mocks (providers only; persistence goes through the real dal) ---
 
 type mockEmailProvider struct {
-	name  string
-	err   error
-	calls int
+	name    string
+	err     error
+	calls   int
+	lastMsg *email.Message
 }
 
 func (m *mockEmailProvider) Vendor() pb.EmailVendor { return pb.EmailVendor_EMAIL_VENDOR_ALIYUN }
 func (m *mockEmailProvider) Account() string        { return m.name }
-func (m *mockEmailProvider) Send(_ context.Context, _ *email.Message) error {
+func (m *mockEmailProvider) Send(_ context.Context, msg *email.Message) error {
 	m.calls++
+	m.lastMsg = msg
 	return m.err
 }
 
@@ -100,26 +100,11 @@ func newTestIdempotencyChecker(t *testing.T) idempotency.Checker {
 	})
 }
 
-// newTestHTTPClient returns an *http.Client configured the same way as
-// production: a short timeout and CheckRedirect=ErrUseLastResponse (no
-// redirect following) to mitigate SSRF on attachment fetches. Use this in
-// tests instead of http.DefaultClient or a bare &http.Client{Timeout:...}.
-func newTestHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-}
-
 // newTestAttachmentConfig returns an AttachmentConfig for the common test
-// path: 1MB hard cap, 2MB single inline, 5MB per-request total. Tests that
-// need other values construct their own &config.AttachmentConfig{...}.
+// path: 2MB single inline, 5MB per-request total. Tests that need other
+// values construct their own &config.AttachmentConfig{...}.
 func newTestAttachmentConfig() *config.AttachmentConfig {
 	return &config.AttachmentConfig{
-		FetchTimeout:        "1s",
-		MaxBytes:            1024 * 1024,
 		MaxInlineBytes:      2 * 1024 * 1024,
 		MaxTotalInlineBytes: 5 * 1024 * 1024,
 	}
@@ -139,7 +124,6 @@ func newTestEmailService(t *testing.T, providers []email.AccountProvider) *Servi
 		email.NewAccountRegistryFromProviders(map[pb.EmailVendor]map[string]email.AccountProvider{pb.EmailVendor_EMAIL_VENDOR_ALIYUN: accounts}),
 		true,
 		newTestAttachmentConfig(),
-		newTestHTTPClient(),
 	)
 }
 
@@ -157,7 +141,6 @@ func newTestEmailServiceNoPersist(t *testing.T, providers []email.AccountProvide
 		email.NewAccountRegistryFromProviders(map[pb.EmailVendor]map[string]email.AccountProvider{pb.EmailVendor_EMAIL_VENDOR_ALIYUN: accounts}),
 		false,
 		newTestAttachmentConfig(),
-		newTestHTTPClient(),
 	)
 }
 
@@ -740,7 +723,7 @@ func TestSendEmail_IdempotencyReleased_OnGIDFailure(t *testing.T) {
 			pb.EmailVendor_EMAIL_VENDOR_ALIYUN: {"p0": &mockEmailProvider{name: "mock"}},
 		}),
 		true,
-		newTestAttachmentConfig(), newTestHTTPClient(),
+		newTestAttachmentConfig(),
 	)
 
 	req := &pb.SendEmailRequest{
@@ -772,7 +755,7 @@ func TestSendEmail_BodyPreserved_VerifyNoLinkInjection(t *testing.T) {
 		pb.EmailVendor_EMAIL_VENDOR_ALIYUN: {"primary": provider},
 	})
 	svc := New(db, idem, getTestGID(t), reg, true,
-		newTestAttachmentConfig(), newTestHTTPClient())
+		newTestAttachmentConfig())
 
 	req := &pb.SendEmailRequest{
 		To:       []*pb.EmailAddress{{Email: "user@test.com"}},
@@ -803,10 +786,11 @@ func TestSendEmail_BodyPreserved_VerifyNoLinkInjection(t *testing.T) {
 	assert.Equal(t, "", atts[0].URL, "inline-content attachments have no URL")
 }
 
-// TestSendEmail_MIMEAttachment_FetchFailure verifies that when an attachment
-// URL fetch fails, SendEmail returns ErrAttachmentFetchFailed and no record
-// is persisted (the error short-circuits before persistEmailRecord).
-func TestSendEmail_MIMEAttachment_FetchFailure(t *testing.T) {
+// TestSendEmail_URLAttachment_ReferenceNotFetched verifies the pure-reference
+// semantics of url-only attachments: the service must NOT fetch the url — a
+// send pointing at a closed port still succeeds, no MIME part is produced,
+// and the metadata row lands in the side table.
+func TestSendEmail_URLAttachment_ReferenceNotFetched(t *testing.T) {
 	db := setupEmailTestDB(t)
 	idem := newTestIdempotencyChecker(t)
 	provider := &mockEmailProvider{name: "primary"}
@@ -814,9 +798,9 @@ func TestSendEmail_MIMEAttachment_FetchFailure(t *testing.T) {
 		pb.EmailVendor_EMAIL_VENDOR_ALIYUN: {"primary": provider},
 	})
 	svc := New(db, idem, getTestGID(t), reg, true,
-		newTestAttachmentConfig(), newTestHTTPClient())
+		newTestAttachmentConfig())
 
-	// Point at a closed port to force fetch failure.
+	// Closed port: under the old fetch semantics this failed the whole send.
 	req := &pb.SendEmailRequest{
 		To:       []*pb.EmailAddress{{Email: "user@test.com"}},
 		Subject:  "with attachment",
@@ -827,13 +811,19 @@ func TestSendEmail_MIMEAttachment_FetchFailure(t *testing.T) {
 			{Filename: "r.pdf", Url: "http://127.0.0.1:1/r.pdf"},
 		},
 	}
-	_, err := svc.SendEmail(context.Background(), req)
-	require.Error(t, err)
+	resp, err := svc.SendEmail(context.Background(), req)
+	require.NoError(t, err, "url reference must not be fetched; send proceeds")
 
-	// Fetch failure short-circuits before persistence: the error must be
-	// ErrAttachmentFetchFailed (send returned before persistEmailRecord ran).
-	assert.True(t, errors.Is(err, xcodes.ErrAttachmentFetchFailed.New()),
-		"expected ErrAttachmentFetchFailed, got %v", err)
+	// No MIME part reached the provider.
+	require.NotNil(t, provider.lastMsg)
+	assert.Empty(t, provider.lastMsg.Attachments, "url-only attachment must not become a MIME part")
+
+	// Metadata is persisted for record queries.
+	atts, err := dal.ListEmailRecordAttachments(context.Background(), db, resp.Id)
+	require.NoError(t, err)
+	require.Len(t, atts, 1)
+	assert.Equal(t, "r.pdf", atts[0].Filename)
+	assert.Equal(t, "http://127.0.0.1:1/r.pdf", atts[0].URL)
 }
 
 func TestGetEmail_returnsAttachments(t *testing.T) {
@@ -844,14 +834,9 @@ func TestGetEmail_returnsAttachments(t *testing.T) {
 		pb.EmailVendor_EMAIL_VENDOR_ALIYUN: {"primary": provider},
 	})
 	svc := New(db, idem, getTestGID(t), reg, true,
-		newTestAttachmentConfig(), newTestHTTPClient())
+		newTestAttachmentConfig())
 
-	// One attachment via inline content, one via URL fetch (httptest server).
-	mimeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, "b-content")
-	}))
-	defer mimeSrv.Close()
-
+	// One inline-content attachment, one url reference.
 	sendReq := &pb.SendEmailRequest{
 		To:       []*pb.EmailAddress{{Email: "user@test.com"}},
 		Subject:  "x",
@@ -860,7 +845,7 @@ func TestGetEmail_returnsAttachments(t *testing.T) {
 		SenderId: "svc",
 		Attachments: []*pb.EmailAttachment{
 			{Filename: "a.txt", Content: []byte("a-content")},
-			{Filename: "b.txt", Url: mimeSrv.URL + "/b.txt"},
+			{Filename: "b.txt", Url: "https://oss.example.com/b.txt"},
 		},
 	}
 	resp, err := svc.SendEmail(context.Background(), sendReq)
@@ -872,14 +857,13 @@ func TestGetEmail_returnsAttachments(t *testing.T) {
 	assert.Equal(t, "a.txt", got.GetAttachments()[0].GetFilename())
 	assert.Equal(t, "b.txt", got.GetAttachments()[1].GetFilename())
 	assert.Equal(t, "", got.GetAttachments()[0].GetUrl(), "inline-content attachment has no url")
-	assert.Equal(t, mimeSrv.URL+"/b.txt", got.GetAttachments()[1].GetUrl())
+	assert.Equal(t, "https://oss.example.com/b.txt", got.GetAttachments()[1].GetUrl())
 }
 
-// TestSendEmail_MIMEAttachment_PersistedToSideTable is the MIME-only happy
-// path: a single MIME attachment is downloaded and the send succeeds, with
-// the attachment metadata written to the side table (regression for the
-// MIME persist path which was previously only covered mixed with LINK).
-func TestSendEmail_MIMEAttachment_PersistedToSideTable(t *testing.T) {
+// TestSendEmail_URLAttachment_PersistedToSideTable is the url-only happy
+// path: the reference metadata is written to the side table while the
+// provider receives no MIME part for it.
+func TestSendEmail_URLAttachment_PersistedToSideTable(t *testing.T) {
 	db := setupEmailTestDB(t)
 	idem := newTestIdempotencyChecker(t)
 	provider := &mockEmailProvider{name: "primary"}
@@ -887,14 +871,8 @@ func TestSendEmail_MIMEAttachment_PersistedToSideTable(t *testing.T) {
 		pb.EmailVendor_EMAIL_VENDOR_ALIYUN: {"primary": provider},
 	})
 
-	// Serve the MIME attachment bytes.
-	mimeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "PDF-CONTENT")
-	}))
-	defer mimeSrv.Close()
-
 	svc := New(db, idem, getTestGID(t), reg, true,
-		newTestAttachmentConfig(), newTestHTTPClient())
+		newTestAttachmentConfig())
 
 	req := &pb.SendEmailRequest{
 		To:       []*pb.EmailAddress{{Email: "user@test.com"}},
@@ -903,7 +881,7 @@ func TestSendEmail_MIMEAttachment_PersistedToSideTable(t *testing.T) {
 		Scene:    pb.EmailScene_EMAIL_SCENE_NOTIFICATION,
 		SenderId: "svc",
 		Attachments: []*pb.EmailAttachment{
-			{Filename: "r.pdf", Url: mimeSrv.URL, MimeType: "application/pdf"},
+			{Filename: "r.pdf", Url: "https://oss.example.com/r.pdf", MimeType: "application/pdf"},
 		},
 	}
 	resp, err := svc.SendEmail(context.Background(), req)
@@ -915,6 +893,7 @@ func TestSendEmail_MIMEAttachment_PersistedToSideTable(t *testing.T) {
 	require.Len(t, atts, 1)
 	assert.Equal(t, "r.pdf", atts[0].Filename)
 	assert.Equal(t, "application/pdf", atts[0].MimeType)
+	assert.Empty(t, provider.lastMsg.Attachments)
 }
 
 // --- attachment validation ---
@@ -929,14 +908,13 @@ func TestValidateAttachments_urlOrContentRequired(t *testing.T) {
 		{Filename: "f.txt"},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exactly one of url or content")
+	assert.Contains(t, err.Error(), "at least one of url or content")
 
-	// Both set — also an error (XOR violation).
+	// Both set — allowed: content embeds as MIME, url is kept as record metadata.
 	err = validateAttachments([]*pb.EmailAttachment{
 		{Filename: "f.txt", Url: "https://x.com/f.txt", Content: []byte("x")},
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exactly one of url or content")
+	require.NoError(t, err)
 }
 
 func TestValidateAttachments_filenameRequired(t *testing.T) {
@@ -954,73 +932,6 @@ func TestValidateAttachments_validPasses(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
-
-func TestFetchAttachmentBytes_success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "hello bytes")
-	}))
-	defer srv.Close()
-
-	svc := &Service{httpClient: newTestHTTPClient(), attachment: &config.AttachmentConfig{MaxBytes: 1024, MaxInlineBytes: 2 * 1024 * 1024, MaxTotalInlineBytes: 5 * 1024 * 1024}}
-	bytes, err := svc.fetchAttachmentBytes(context.Background(), srv.URL, 0)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("hello bytes"), bytes)
-}
-
-func TestFetchAttachmentBytes_exceedsMax(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, strings.Repeat("x", 100))
-	}))
-	defer srv.Close()
-
-	svc := &Service{httpClient: newTestHTTPClient(), attachment: &config.AttachmentConfig{MaxBytes: 10, MaxInlineBytes: 2 * 1024 * 1024, MaxTotalInlineBytes: 5 * 1024 * 1024}}
-	_, err := svc.fetchAttachmentBytes(context.Background(), srv.URL, 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "size limit")
-}
-
-func TestFetchAttachmentBytes_httpError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	svc := &Service{httpClient: newTestHTTPClient(), attachment: &config.AttachmentConfig{MaxBytes: 1024, MaxInlineBytes: 2 * 1024 * 1024, MaxTotalInlineBytes: 5 * 1024 * 1024}}
-	_, err := svc.fetchAttachmentBytes(context.Background(), srv.URL, 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "404")
-}
-
-func TestProcessAttachments_PreservesSizeErrorCategory(t *testing.T) {
-	// Server returns a body larger than maxBytes; fetchAttachmentBytes returns
-	// ErrAttachmentTooLarge (413). processAttachments must NOT re-wrap it as
-	// ErrAttachmentFetchFailed (502).
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, strings.Repeat("x", 100))
-	}))
-	defer srv.Close()
-
-	svc := &Service{httpClient: newTestHTTPClient(), attachment: &config.AttachmentConfig{MaxBytes: 10, MaxInlineBytes: 2 * 1024 * 1024, MaxTotalInlineBytes: 5 * 1024 * 1024}}
-	_, err := svc.processAttachments(context.Background(),
-		[]*pb.EmailAttachment{
-			{Filename: "big.bin", Url: srv.URL},
-		})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrAttachmentTooLarge.New()),
-		"size violation must remain ErrAttachmentTooLarge, got %v", err)
-}
-
-func TestFetchAttachmentBytes_UnconfiguredMaxBytes(t *testing.T) {
-	svc := &Service{httpClient: newTestHTTPClient(), attachment: &config.AttachmentConfig{MaxBytes: 0, MaxInlineBytes: 2 * 1024 * 1024, MaxTotalInlineBytes: 5 * 1024 * 1024}}
-	_, err := svc.fetchAttachmentBytes(context.Background(), "https://example.com/x", 0)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrInternal.New()),
-		"unconfigured maxBytes is a server config error (500), got %v", err)
-}
-
-// TestValidateAttachments_rejectsNonHTTPScheme verifies that file://, ftp://,
-// gopher:// (and any non-http(s) scheme) are rejected at validation time to
-// mitigate SSRF.
 func TestValidateAttachments_rejectsNonHTTPScheme(t *testing.T) {
 	for _, scheme := range []string{"file:///etc/passwd", "ftp://x/y", "gopher://x/y"} {
 		err := validateAttachments([]*pb.EmailAttachment{
@@ -1030,62 +941,9 @@ func TestValidateAttachments_rejectsNonHTTPScheme(t *testing.T) {
 		assert.Contains(t, err.Error(), "scheme")
 	}
 }
-
-// TestFetchAttachmentBytes_DoesNotFollowRedirects verifies the production
-// http.Client config (CheckRedirect=ErrUseLastResponse) prevents redirect
-// following, mitigating SSRF via redirect to internal addresses.
-func TestFetchAttachmentBytes_DoesNotFollowRedirects(t *testing.T) {
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "target-body")
-	}))
-	defer target.Close()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusFound)
-	}))
-	defer srv.Close()
-
-	svc := &Service{
-		httpClient: newTestHTTPClient(),
-		attachment: &config.AttachmentConfig{MaxBytes: 1024},
-	}
-	// 302 response is returned as-is; body is the redirect HTML, not target-body.
-	// Note: fetchAttachmentBytes treats non-2xx as fetch failure, so this errors,
-	// but the important assertion is that target-body is never fetched.
-	_, err := svc.fetchAttachmentBytes(context.Background(), srv.URL, 0)
-	require.Error(t, err, "302 must be treated as non-2xx fetch failure")
-	assert.NotContains(t, err.Error(), "target-body")
-}
-
-// TestFetchAttachmentBytes_SizeHintExceedsMax verifies that a size_hint
-// greater than maxBytes is rejected without hitting the network (the check
-// runs before the body read, but after the request is issued — the
-// size_hint branch is a defense-in-depth bound on callers that know the
-// size upfront).
-func TestFetchAttachmentBytes_SizeHintExceedsMax(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "x")
-	}))
-	defer srv.Close()
-
-	svc := &Service{
-		httpClient: newTestHTTPClient(),
-		attachment: &config.AttachmentConfig{MaxBytes: 100},
-	}
-	// sizeHint 200 > max 100 — must reject as ErrAttachmentTooLarge.
-	_, err := svc.fetchAttachmentBytes(context.Background(), srv.URL, 200)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrAttachmentTooLarge.New()),
-		"size_hint exceeding max must be ErrAttachmentTooLarge, got %v", err)
-}
-
-// TestValidateAttachments_ReturnsErrInvalidAttachment verifies that
-// validateAttachments returns an error that errors.Is-matches
-// xcodes.ErrInvalidAttachment (previously it returned a bare fmt.Errorf,
-// making the declared ErrInvalidAttachment unused and un-checkable).
 func TestValidateAttachments_ReturnsErrInvalidAttachment(t *testing.T) {
 	err := validateAttachments([]*pb.EmailAttachment{
-		{Filename: "f", Content: []byte("x"), Url: "https://x.com/f"}, // both url and content set (XOR violation)
+		{Filename: "f"}, // neither url nor content set
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, xcodes.ErrInvalidAttachment.New()),
@@ -1105,49 +963,26 @@ func TestValidateAttachments_SchemeViolation_ReturnsErrInvalidAttachment(t *test
 		"expected ErrInvalidAttachment for bad scheme, got %v", err)
 }
 
-// TestProcessAttachments_MultipleViaURL verifies processAttachments fetches
-// multiple URL-based attachments in a single pass, returning one
-// *email.Attachment per input with the correct bytes.
-func TestProcessAttachments_MultipleViaURL(t *testing.T) {
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "ONE")
-	}))
-	defer srv1.Close()
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "TWO")
-	}))
-	defer srv2.Close()
-	srv3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "THREE")
-	}))
-	defer srv3.Close()
-
-	svc := &Service{httpClient: newTestHTTPClient(), attachment: &config.AttachmentConfig{MaxBytes: 1024, MaxInlineBytes: 2 * 1024 * 1024, MaxTotalInlineBytes: 5 * 1024 * 1024}}
+// TestProcessAttachments_MultipleURLReferences verifies url-only attachments
+// produce no MIME parts at all — they are pure references now.
+func TestProcessAttachments_MultipleURLReferences(t *testing.T) {
+	svc := &Service{attachment: &config.AttachmentConfig{MaxInlineBytes: 2 * 1024 * 1024, MaxTotalInlineBytes: 5 * 1024 * 1024}}
 	atts := []*pb.EmailAttachment{
-		{Filename: "1.bin", Url: srv1.URL},
-		{Filename: "2.bin", Url: srv2.URL},
-		{Filename: "3.bin", Url: srv3.URL},
+		{Filename: "1.bin", Url: "http://127.0.0.1:1/1.bin"},
+		{Filename: "2.bin", Url: "http://127.0.0.1:1/2.bin"},
+		{Filename: "3.bin", Url: "http://127.0.0.1:1/3.bin"},
 	}
-	mime, err := svc.processAttachments(context.Background(), atts)
+	mime, err := svc.processAttachments(atts)
 	require.NoError(t, err)
-	require.Len(t, mime, 3, "all 3 attachments must be fetched")
-	assert.Equal(t, []byte("ONE"), mime[0].Content)
-	assert.Equal(t, []byte("TWO"), mime[1].Content)
-	assert.Equal(t, []byte("THREE"), mime[2].Content)
-	assert.Equal(t, "1.bin", mime[0].Filename)
-	assert.Equal(t, "3.bin", mime[2].Filename)
+	assert.Empty(t, mime, "url-only attachments must not become MIME parts")
 }
 
-// TestProcessAttachments_InlineContentPreferredOverURL confirms that when
-// both content and url are... no — they're XOR by validation. This test
-// confirms the content path is taken (no HTTP call) when only content is set.
-func TestProcessAttachments_InlineContent_NoFetchPerformed(t *testing.T) {
-	// URL that would fail if hit — proves we never fetch when content is set.
+// TestProcessAttachments_ContentPreferredOverURL confirms the content path
+// is taken when both content and url are set — url is record metadata only.
+func TestProcessAttachments_ContentPreferredOverURL(t *testing.T) {
 	unreachable := "http://127.0.0.1:1/unreachable.bin"
 	svc := &Service{
-		httpClient: newTestHTTPClient(),
 		attachment: &config.AttachmentConfig{
-			MaxBytes:            1024,
 			MaxInlineBytes:      1024,
 			MaxTotalInlineBytes: 5 * 1024,
 		},
@@ -1155,12 +990,10 @@ func TestProcessAttachments_InlineContent_NoFetchPerformed(t *testing.T) {
 	atts := []*pb.EmailAttachment{
 		{Filename: "inline.bin", Content: []byte("INLINE-BYTES"), Url: unreachable},
 	}
-	// Note: validateAttachments would reject this (XOR). Bypass it to test
-	// processAttachments directly — it must prefer content over url.
-	mime, err := svc.processAttachments(context.Background(), atts)
+	mime, err := svc.processAttachments(atts)
 	require.NoError(t, err)
 	require.Len(t, mime, 1)
-	assert.Equal(t, []byte("INLINE-BYTES"), mime[0].Content, "inline content must be used as-is, no fetch")
+	assert.Equal(t, []byte("INLINE-BYTES"), mime[0].Content, "inline content must be used as-is")
 }
 
 // TestProcessAttachments_InlineContent_ExceedsSingleCap verifies the
@@ -1168,9 +1001,7 @@ func TestProcessAttachments_InlineContent_NoFetchPerformed(t *testing.T) {
 // switch to url.
 func TestProcessAttachments_InlineContent_ExceedsSingleCap(t *testing.T) {
 	svc := &Service{
-		httpClient: newTestHTTPClient(),
 		attachment: &config.AttachmentConfig{
-			MaxBytes:            1024,
 			MaxInlineBytes:      4,
 			MaxTotalInlineBytes: 5 * 1024,
 		},
@@ -1178,11 +1009,11 @@ func TestProcessAttachments_InlineContent_ExceedsSingleCap(t *testing.T) {
 	atts := []*pb.EmailAttachment{
 		{Filename: "big.bin", Content: []byte("abcdefgh")}, // 8 bytes > 4-byte cap
 	}
-	_, err := svc.processAttachments(context.Background(), atts)
+	_, err := svc.processAttachments(atts)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, xcodes.ErrAttachmentTooLarge.New()),
 		"single-attachment inline cap exceeded must be ErrAttachmentTooLarge, got %v", err)
-	assert.Contains(t, err.Error(), "use url instead")
+	assert.Contains(t, err.Error(), "url reference instead")
 }
 
 // TestProcessAttachments_InlineContent_ExceedsRequestTotalCap verifies the
@@ -1190,9 +1021,7 @@ func TestProcessAttachments_InlineContent_ExceedsSingleCap(t *testing.T) {
 // attachments across url.
 func TestProcessAttachments_InlineContent_ExceedsRequestTotalCap(t *testing.T) {
 	svc := &Service{
-		httpClient: newTestHTTPClient(),
 		attachment: &config.AttachmentConfig{
-			MaxBytes:            1024,
 			MaxInlineBytes:      8,
 			MaxTotalInlineBytes: 10, // tight total
 		},
@@ -1201,7 +1030,7 @@ func TestProcessAttachments_InlineContent_ExceedsRequestTotalCap(t *testing.T) {
 		{Filename: "a.bin", Content: []byte("AAAA")},     // 4 bytes
 		{Filename: "b.bin", Content: []byte("BBBBBBBB")}, // 8 bytes — total 12 > 10
 	}
-	_, err := svc.processAttachments(context.Background(), atts)
+	_, err := svc.processAttachments(atts)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, xcodes.ErrAttachmentTooLarge.New()),
 		"per-request inline cap exceeded must be ErrAttachmentTooLarge, got %v", err)
@@ -1350,5 +1179,5 @@ func TestValidateSendEmailRequest_AttachmentsURLOrContentRequired(t *testing.T) 
 	}
 	err := validateSendEmailRequest(req)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exactly one of url or content")
+	assert.Contains(t, err.Error(), "at least one of url or content")
 }

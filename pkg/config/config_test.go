@@ -328,22 +328,14 @@ func TestValidate_ModuleMode_NilSnowflake(t *testing.T) {
 		"missing snowflake in module mode must return a config error, not panic")
 }
 
-// TestAttachmentConfig_Defaults verifies the nil-receiver and zero-value
-// fallbacks for FetchTimeoutDuration. Field-level defaults now come from
-// `default:` tags wired by configx at Load time; XxxOr() helpers are gone.
-// FetchTimeoutDuration keeps a defensive fallback for module-mode callers
-// that bypass Load.
+// TestAttachmentConfig_Defaults is a placeholder keeping the suite aware that
+// AttachmentConfig now has only inline-cap fields — their defaults come from
+// `default:` tags wired by configx at Load time (no XxxOr() helpers). The
+// former FetchTimeoutDuration fallbacks were removed together with the
+// URL-fetch logic.
 func TestAttachmentConfig_Defaults(t *testing.T) {
-	var nilPtr *AttachmentConfig
-	require.Equal(t, 30*time.Second, nilPtr.FetchTimeoutDuration(), "nil receiver must default to 30s")
-
-	var empty AttachmentConfig
-	require.Equal(t, 30*time.Second, empty.FetchTimeoutDuration(), "empty FetchTimeout must default to 30s")
-
-	// Explicit values honored.
-	cfg := &AttachmentConfig{FetchTimeout: "60s", MaxBytes: 5 * 1024 * 1024}
-	require.Equal(t, 60*time.Second, cfg.FetchTimeoutDuration())
-	require.Equal(t, int64(5*1024*1024), cfg.MaxBytes)
+	cfg := &AttachmentConfig{MaxInlineBytes: 5 * 1024 * 1024}
+	require.Equal(t, int64(5*1024*1024), cfg.MaxInlineBytes)
 }
 
 // loadEnvFile parses a dotenv file and sets each KEY=VALUE into the test

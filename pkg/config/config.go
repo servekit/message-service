@@ -131,48 +131,23 @@ type ThirdPartyConfig struct {
 // aliased from go-common so Mode is the configx.Mode enum.
 type RemoteServiceConfig[T any] = configx.RemoteServiceConfig[T]
 
-// DefaultAttachmentFetchTimeout is the fallback used by AttachmentConfig.FetchTimeout
-// when fetch_timeout is unset OR message.New is constructed with a nil httpClient
-// (module mode without an injected client). Exported so non-config callers
-// can share the same default.
-const DefaultAttachmentFetchTimeout = 30 * time.Second
-
 // DefaultIdempotencyTTL is the fallback per-channel TTL when the yaml field
 // is empty or unparseable, or when a module-mode caller constructs an
 // EmailConfig / SMSConfig without going through Load. Exported so non-config
 // callers can share the same default.
 const DefaultIdempotencyTTL = 5 * time.Minute
 
-// AttachmentConfig controls attachment fetching and inline-content limits.
-// Defaults come from `default:` tags — configx wires them via viper.SetDefault
-// at Load time, so callers can read fields directly without XxxOr() helpers.
+// AttachmentConfig controls inline-content attachment limits. url-sourced
+// attachments are pure references — never fetched — so they carry no fetch
+// timeout or size cap here. Defaults come from `default:` tags — configx
+// wires them via viper.SetDefault at Load time, so callers can read fields
+// directly without XxxOr() helpers.
 type AttachmentConfig struct {
-	// FetchTimeout is the per-request HTTP timeout for URL-sourced
-	// attachments, in time.ParseDuration string form (matches IdempotencyConfig).
-	FetchTimeout string `default:"30s" mapstructure:"fetch_timeout"`
-	// MaxBytes is the hard cap on a single attachment — applies to both URL
-	// fetch and inline content length.
-	MaxBytes int64 `default:"10485760" mapstructure:"max_bytes"`
-	// MaxInlineBytes caps a single attachment.content payload. Must be <= MaxBytes.
+	// MaxInlineBytes caps a single attachment.content payload.
 	MaxInlineBytes int64 `default:"2097152" mapstructure:"max_inline_bytes"`
 	// MaxTotalInlineBytes caps the sum of all attachment.content payloads in
 	// one SendEmailRequest. Leaves headroom under ServerConfig.MaxRecvMsgSizeBytes.
 	MaxTotalInlineBytes int64 `default:"5242880" mapstructure:"max_total_inline_bytes"`
-}
-
-// FetchTimeoutDuration parses cfg.FetchTimeout into a time.Duration, falling
-// back to DefaultAttachmentFetchTimeout on empty / unparseable input.
-// Defensive only — configx fills the default at Load time, so this is for
-// module-mode callers that construct AttachmentConfig without going through
-// Load.
-func (a *AttachmentConfig) FetchTimeoutDuration() time.Duration {
-	if a == nil || a.FetchTimeout == "" {
-		return DefaultAttachmentFetchTimeout
-	}
-	if d, err := time.ParseDuration(a.FetchTimeout); err == nil {
-		return d
-	}
-	return DefaultAttachmentFetchTimeout
 }
 
 // DefaultIdempotencyKeyPrefix is the Redis namespace used when

@@ -12,7 +12,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"gorm.io/gorm"
@@ -143,24 +142,13 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		cfg.SMS.Persistence = *o.SMSPersistence
 	}
 
-	httpClient := &http.Client{
-		Timeout: cfg.Email.Attachment.FetchTimeoutDuration(),
-		// Do not follow redirects — mitigates SSRF (a malicious or compromised
-		// attachment endpoint could otherwise redirect the fetch to internal
-		// addresses such as the cloud metadata service). Attachment URLs are
-		// expected to be direct (OSS pre-signed).
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
 	svc := &Service{
 		cfg: cfg,
 		mgr: mgr,
 		db:  db,
 		gid: gid,
 		email: svcemail.New(db, idemChecker, gid, emailRegistry,
-			cfg.Email.Persistence, cfg.Email.Attachment, httpClient),
+			cfg.Email.Persistence, cfg.Email.Attachment),
 		sms:       svcsms.New(db, idemChecker, gid, smsRegistry, smsRouter, cfg.SMS.Persistence),
 		startedAt: time.Now().UnixMilli(),
 	}

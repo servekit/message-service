@@ -301,9 +301,10 @@ message SendEmailRequest {
   // sender lists, etc.); the service does not pre-constrain.
   EmailAddress from = 15;
 
-  // attachments is optional. LINK attachments augment html_body; MIME
-  // attachments are downloaded and added as real MIME parts. Mixed lists
-  // are allowed — each attachment carries its own kind.
+  // attachments is optional. content attachments are embedded as real MIME
+  // parts; url-only attachments are pure references (caller-managed download
+  // links, rendered into html_body by the caller) whose metadata is persisted
+  // for record queries. Mixed lists are allowed.
   repeated EmailAttachment attachments = 16;
 
   option (buf.validate.message).cel = {
@@ -343,18 +344,19 @@ message EmailAttachment {
   // filename is the MIME filename. Required.
   string filename = 2 [(buf.validate.field).string.min_len = 1];
 
-  // url is the HTTP or HTTPS URL of the attachment content. Service fetches
-  // the bytes at send time. Mutually exclusive with content — exactly one of
-  // the two must be set. Service rejects non-http(s) schemes (file://, ftp://,
-  // gopher://, etc.) to mitigate SSRF; the HTTP client does not follow
-  // redirects.
+  // url is the HTTP or HTTPS URL of the attachment content — a
+  // caller-managed reference (typically an object-storage download link).
+  // message-service does NOT fetch it and does NOT embed it into the email:
+  // callers render the download link into html_body themselves; message-service
+  // only persists the reference for record queries. Non-http(s) schemes are
+  // rejected defensively (file://, ftp://, gopher://, etc.).
   string url = 3;
 
-  // content is the raw attachment bytes supplied inline. Mutually exclusive
-  // with url — exactly one of the two must be set. Bounded by
-  // attachment.max_inline_bytes (single attachment) and
-  // attachment.max_total_inline_bytes (sum across the request). Attachments
-  // exceeding these limits must use url instead.
+  // content is the raw attachment bytes supplied inline — embedded as a real
+  // MIME part. Bounded by attachment.max_inline_bytes (single attachment)
+  // and attachment.max_total_inline_bytes (sum across the request).
+  // May be set together with url (content embeds; url is kept as record
+  // metadata). Larger files must use url references instead.
   bytes content = 8;
 
   // inline selects rendering: true = CID-embedded (display inline in the
