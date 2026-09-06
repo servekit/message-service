@@ -2,7 +2,6 @@ module github.com/servekit/message-service
 
 go 1.26.6
 
-
 require (
 	buf.build/go/protovalidate v1.2.0
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.2.1
@@ -108,7 +107,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
-	github.com/servekit/api/gen/go v0.0.0-20260905144026-cd5d03f82c94
+	github.com/servekit/api/gen/go v0.0.0-20260906125712-e0bb0334f188
 	github.com/shirou/gopsutil/v4 v4.26.5 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/sony/sonyflake/v2 v2.1.0 // indirect
