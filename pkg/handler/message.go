@@ -132,10 +132,6 @@ func (h *Handler) ListSMSRegions(ctx context.Context, req *pb.ListSMSRegionsRequ
 	return h.svc.ListSMSRegions(ctx, req)
 }
 
-func (h *Handler) ListRegionCodes(ctx context.Context, req *pb.ListRegionCodesRequest) (*pb.ListRegionCodesResponse, error) {
-	return h.svc.ListRegionCodes(ctx, req)
-}
-
 // ListSMSSenders returns distinct sender_id values across SMS records, for
 // frontend filter dropdowns.
 func (h *Handler) ListSMSSenders(ctx context.Context, req *pb.ListSMSSendersRequest) (*pb.ListSMSSendersResponse, error) {

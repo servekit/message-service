@@ -24,7 +24,6 @@ import (
 	provemail "github.com/servekit/message-service/internal/provider/email"
 	provesms "github.com/servekit/message-service/internal/provider/sms"
 	svcemail "github.com/servekit/message-service/internal/service/email"
-	region "github.com/servekit/message-service/internal/service/region"
 	svcsms "github.com/servekit/message-service/internal/service/sms"
 	"github.com/servekit/message-service/internal/version"
 	"github.com/servekit/message-service/pkg/config"
@@ -47,7 +46,6 @@ type Service struct {
 
 	email  *svcemail.Service
 	sms    *svcsms.Service
-	region *region.Service
 
 	// startedAt is set once in New; Ping returns it for uptime.
 	startedAt int64
@@ -153,7 +151,6 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		email: svcemail.New(db, idemChecker, gid, emailRegistry,
 			cfg.Email.Persistence, cfg.Email.Attachment),
 		sms:       svcsms.New(db, idemChecker, gid, smsRegistry, smsRouter, cfg.SMS.Persistence),
-		region:    region.New(),
 		startedAt: time.Now().UnixMilli(),
 	}
 
@@ -244,10 +241,6 @@ func (s *Service) ListSMSRegions(ctx context.Context, req *pb.ListSMSRegionsRequ
 	return s.sms.ListSMSRegions(ctx, req)
 }
 
-// ListRegionCodes delegates to the region subpackage (static directory).
-func (s *Service) ListRegionCodes(ctx context.Context, req *pb.ListRegionCodesRequest) (*pb.ListRegionCodesResponse, error) {
-	return s.region.ListRegionCodes(ctx, req)
-}
 
 // ListSMSSenders delegates to the message subpackage.
 func (s *Service) ListSMSSenders(ctx context.Context, req *pb.ListSMSSendersRequest) (*pb.ListSMSSendersResponse, error) {
