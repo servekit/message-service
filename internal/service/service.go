@@ -33,6 +33,7 @@ import (
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
 
+	"github.com/servekit/go-common/cronx"
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/lifecycle"
 	"github.com/servekit/go-common/redisx"
@@ -126,7 +127,13 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 	quotaChecker := quota.NewChecker(redisClient, "msg:quota")
 
 	// Snapshot-convergence cron. jobs.Scheduler owns the cron lifecycle.
-	scheduler, err := jobs.New(&jobs.Deps{Config: cfg.Cron})
+	// Module-mode callers may construct Config without going through Load
+	// (nil Cron) — cronx.New defaults an empty config.
+	cronCfg := cfg.Cron
+	if cronCfg == nil {
+		cronCfg = &cronx.Config{}
+	}
+	scheduler, err := jobs.New(&jobs.Deps{Config: cronCfg})
 	if err != nil {
 		if cerr := mgr.Stop(); cerr != nil {
 			slog.Error("rollback after scheduler init failure", "error", cerr)
