@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"time"
 
 	pb "github.com/servekit/api/gen/go/messaging/v1"
-	gidservice "github.com/servekit/gid-service/pkg"
 	provemail "github.com/servekit/message-service/internal/provider/email"
 	"github.com/servekit/message-service/internal/service/utils"
 	"github.com/servekit/message-service/internal/store/dal"
@@ -25,159 +25,6 @@ import (
 // =====================================================================
 // Public RPC methods (one per proto RPC, delegates to internal helpers)
 // =====================================================================
-
-// SendEmail sends an email via the configured vendor/account, or the default
-// fallback chain when both are unset. Idempotent on (sender_id, idempotency_key)
-// via Redis: a second request with the same key returns the cached response
-// without re-invoking the provider. Failures are not cached — the reservation
-// is released so the caller can retry the same key.
-func (s *Service) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
-	if err := validateSendEmailRequest(req); err != nil {
-		return nil, xcodes.ErrBadRequest.Wrap(err)
-	}
-
-	// Idempotency reservation (Redis-backed). Always runs regardless of
-	// persistence toggle — Redis is the single source of dedup truth.
-	var idemKey string
-	if k := req.GetIdempotencyKey(); k != "" {
-		idemKey = k
-		acquired, payload, err := s.idem.Reserve(ctx, "email", req.GetSenderId(), k)
-		if err != nil {
-			return nil, xcodes.ErrInternal.Wrap(err)
-		}
-		if !acquired {
-			if payload == nil {
-				return nil, xcodes.ErrIdempotencyConflict.New("idempotency_key in flight")
-			}
-			resp, err := deserializeIdempotentEmail(payload)
-			if err != nil {
-				return nil, xcodes.ErrInternal.Wrap(err)
-			}
-			return resp, nil
-		}
-	}
-
-	sender, err := s.emailRegistry.SenderFor(req.GetVendor(), req.GetAccount())
-	if err != nil {
-		if idemKey != "" {
-			releaseErr := s.idem.Release(context.Background(), "email", req.GetSenderId(), idemKey)
-			if releaseErr != nil {
-				slog.Error("idempotency release after sender lookup failure", "key", idemKey, "error", releaseErr)
-			}
-		}
-		return nil, xcodes.ErrBadRequest.Wrap(err)
-	}
-
-	id, err := gidservice.NextID(ctx, s.gid)
-	if err != nil {
-		if idemKey != "" {
-			releaseErr := s.idem.Release(context.Background(), "email", req.GetSenderId(), idemKey)
-			if releaseErr != nil {
-				slog.Error("idempotency release after gid failure", "key", idemKey, "error", releaseErr)
-			}
-		}
-		return nil, xcodes.ErrInternal.Wrap(err)
-	}
-
-	// Attachment processing: wrap inline-content attachments as MIME parts.
-	// url-only attachments are pure references (caller-managed download
-	// links, e.g. OSS) — not fetched, not embedded; their metadata is
-	// persisted for record queries. htmlBody is passed through unchanged —
-	// message-service never injects attachment links into the body; callers
-	// render their own links/images inline.
-	htmlBody := req.GetHtmlBody()
-	mimeAtts, err := s.processAttachments(req.GetAttachments())
-	if err != nil {
-		if idemKey != "" {
-			releaseErr := s.idem.Release(context.Background(), "email", req.GetSenderId(), idemKey)
-			if releaseErr != nil {
-				slog.Error("idempotency release after attachment processing", "key", idemKey, "error", releaseErr)
-			}
-		}
-		return nil, err
-	}
-
-	msg := &provemail.Message{
-		To:             pbToAddrs(req.GetTo()),
-		Cc:             pbToAddrs(req.GetCc()),
-		Bcc:            pbToAddrs(req.GetBcc()),
-		Subject:        req.GetSubject(),
-		Body:           req.GetBody(),
-		HTMLBody:       htmlBody,
-		ReplyTo:        pbToAddr(req.GetReplyTo()),
-		From:           pbToAddr(req.GetFrom()),
-		Template:       req.GetTemplateId(),
-		TemplateParams: req.GetTemplateParams(),
-		Attachments:    mimeAtts,
-	}
-
-	result, sendErr := sender.Send(ctx, msg)
-
-	// Pre-send failure (empty recipient / no provider): no result to persist.
-	// Release the idempotency reservation so the caller can retry the key.
-	if sendErr != nil && result == nil {
-		if idemKey != "" {
-			releaseErr := s.idem.Release(context.Background(), "email", req.GetSenderId(), idemKey)
-			if releaseErr != nil {
-				slog.Error("idempotency release after pre-send failure", "key", idemKey, "error", releaseErr)
-			}
-		}
-		return nil, xcodes.ErrMessageSendFailed.Wrapf(sendErr, "stage=pre_send")
-	}
-
-	// result is guaranteed non-nil from here. Persist with an independent
-	// context so request cancellation does not lose the record. Skipped when
-	// persistence disabled — caller opted out of DB writes.
-	if s.persistence {
-		persistCtx, cancel := context.WithTimeout(context.Background(), utils.PersistTimeout)
-		defer cancel()
-		s.persistEmailRecord(persistCtx, id, req, htmlBody, result)
-	}
-
-	// Post-send failure (vendor returned a failed result, not a pre-send
-	// error): Release the reservation so the caller can retry — failures are
-	// not cached. Must run BEFORE Complete to avoid a window where a fake
-	// Status=SENT payload is observable to a concurrent caller with the same
-	// idempotency_key.
-	if sendErr != nil {
-		if idemKey != "" {
-			releaseErr := s.idem.Release(context.Background(), "email", req.GetSenderId(), idemKey)
-			if releaseErr != nil {
-				slog.Error("idempotency release after post-send failure", "key", idemKey, "error", releaseErr)
-			}
-		}
-		return nil, xcodes.ErrMessageSendFailed.Wrapf(sendErr,
-			"vendor=%s account=%s attempts=%d",
-			result.Vendor.String(), result.Account, result.Attempts)
-	}
-
-	// Success: cache the response payload so a second call with the same key
-	// returns the cached result. Errors are logged but don't affect the
-	// response — the send already succeeded.
-	if idemKey != "" {
-		resp := &pb.SendResponse{
-			Id:     id,
-			Status: pb.MessageStatus_MESSAGE_STATUS_SENT,
-			Vendor: &pb.SendResponse_EmailVendor{
-				EmailVendor: result.Vendor,
-			},
-		}
-		payload, err := protojson.Marshal(resp)
-		if err != nil {
-			slog.Error("idempotency marshal", "key", idemKey, "error", err)
-		} else if err := s.idem.Complete(context.Background(), "email", req.GetSenderId(), idemKey, payload); err != nil {
-			slog.Error("idempotency complete", "key", idemKey, "error", err)
-		}
-	}
-
-	return &pb.SendResponse{
-		Id:     id,
-		Status: pb.MessageStatus_MESSAGE_STATUS_SENT,
-		Vendor: &pb.SendResponse_EmailVendor{
-			EmailVendor: result.Vendor,
-		},
-	}, nil
-}
 
 // GetEmail returns a single email record by ID.
 func (s *Service) GetEmail(ctx context.Context, req *pb.GetEmailRequest) (*pb.EmailRecord, error) {
@@ -203,7 +50,7 @@ func (s *Service) ListEmails(ctx context.Context, req *pb.ListEmailsRequest) (*p
 		Scene:         req.GetScene(),
 		Status:        req.GetStatus(),
 		Target:        req.GetTarget(),
-		SenderID:      req.GetSenderId(),
+		AppKey:        req.GetAppKey(),
 		SortField:     req.GetSortField(),
 		SortDirection: req.GetSortDirection(),
 	}
@@ -247,7 +94,7 @@ func (s *Service) ListEmailsByCursor(ctx context.Context, req *pb.ListEmailsByCu
 		Scene:         req.GetScene(),
 		Status:        req.GetStatus(),
 		Target:        req.GetTarget(),
-		SenderID:      req.GetSenderId(),
+		AppKey:        req.GetAppKey(),
 		SortField:     req.GetSortField(),
 		SortDirection: req.GetSortDirection(),
 	}
@@ -358,28 +205,22 @@ func (s *Service) GetEmailStats(ctx context.Context, req *pb.GetEmailStatsReques
 	}, nil
 }
 
-// ListEmailSenders returns all distinct sender_id values, for frontend email
-// list filter dropdowns.
-func (s *Service) ListEmailSenders(ctx context.Context, _ *pb.ListEmailSendersRequest) (*pb.ListEmailSendersResponse, error) {
-	if !s.persistence {
-		return nil, xcodes.ErrPersistenceDisabled.Wrap(fmt.Errorf("email persistence is disabled"))
-	}
-	senders, err := dal.ListEmailSenderIDs(ctx, s.db)
-	if err != nil {
-		return nil, err
-	}
-	return &pb.ListEmailSendersResponse{SenderIds: senders}, nil
-}
-
 // =====================================================================
 // Private methods (Service-owned state or RPC helpers)
 // =====================================================================
 
+// persistEmailRecordWithTimeout persists with an independent context so
+// request cancellation does not lose the record.
+func (s *Service) persistEmailRecordWithTimeout(id int64, app *models.MessageApp, req *pb.SendEmailRequest, subject, textBody, htmlBody string, templateID int64, result *provemail.SendResult) {
+	persistCtx, cancel := context.WithTimeout(context.Background(), utils.PersistTimeout)
+	defer cancel()
+	s.persistEmailRecord(persistCtx, id, app, req, subject, textBody, htmlBody, templateID, result)
+}
+
 // persistEmailRecord writes the email record (and attachment metadata rows)
 // to the DB. Synchronous but error-logged — send already succeeded, so a DB
-// failure must not propagate to the caller. Uses an independent ctx so
-// request cancellation does not lose the record.
-func (s *Service) persistEmailRecord(ctx context.Context, id int64, req *pb.SendEmailRequest, htmlBody string, result *provemail.SendResult) {
+// failure must not propagate to the caller.
+func (s *Service) persistEmailRecord(ctx context.Context, id int64, app *models.MessageApp, req *pb.SendEmailRequest, subject, textBody, htmlBody string, templateID int64, result *provemail.SendResult) {
 	// DB stores bare emails only (no display_name) — query filtering targets
 	// the email address, not the human-readable name. Display name lives in
 	// the request, not the persisted record.
@@ -395,14 +236,14 @@ func (s *Service) persistEmailRecord(ctx context.Context, id int64, req *pb.Send
 		Account:        result.Account,
 		Scene:          int32(req.GetScene()),
 		Target:         primaryTarget,
-		SenderID:       req.GetSenderId(),
+		AppKey:         app.AppKey,
 		Cc:             models.StringSlice(bareEmailsFromAddrs(req.GetCc())),
 		Bcc:            models.StringSlice(bareEmailsFromAddrs(req.GetBcc())),
-		Subject:        req.GetSubject(),
-		Content:        req.GetBody(),
+		Subject:        subject,
+		Content:        textBody,
 		HTMLBody:       htmlBody,
 		ReplyTo:        bareEmailFromAddr(req.GetReplyTo()),
-		TemplateID:     req.GetTemplateId(),
+		TemplateID:     strconv.FormatInt(templateID, 10),
 		TemplateParams: models.MapStringString(req.GetTemplateParams()),
 		Attempts:       result.Attempts,
 	}
@@ -543,7 +384,7 @@ func toProtoEmailRecord(r *models.MessageEmailRecord) *pb.EmailRecord {
 		Scene:          pb.EmailScene(r.Scene),
 		Status:         pb.MessageStatus(r.Status),
 		Target:         addrFromBareEmail(r.Target),
-		SenderId:       r.SenderID,
+		AppKey:         r.AppKey,
 		Cc:             addrsFromBareEmails(r.Cc),
 		Bcc:            addrsFromBareEmails(r.Bcc),
 		Subject:        r.Subject,
@@ -693,42 +534,4 @@ func addrsFromBareEmails(ss []string) []*pb.EmailAddress {
 		}
 	}
 	return out
-}
-
-// --- validation ---
-
-// validateSendEmailRequest enforces required fields and cross-field invariants
-// at the service layer. This is a defense-in-depth check that runs even when
-// the protovalidate interceptor is bypassed (e.g. module-mode direct calls).
-// The proto CEL rules are the primary check; this is the fallback.
-//
-// Shared constants (MaxIdempotencyKeyLen, PersistTimeout) and helpers
-// (TruncateErrorMessage) live in internal/service/utils — see utils.go.
-func validateSendEmailRequest(req *pb.SendEmailRequest) error {
-	vendorSet := req.GetVendor() != pb.EmailVendor_EMAIL_VENDOR_UNSPECIFIED
-	accountSet := req.GetAccount() != ""
-	if vendorSet != accountSet {
-		return fmt.Errorf("vendor and account must be set together")
-	}
-	if req.GetScene() == pb.EmailScene_EMAIL_SCENE_UNSPECIFIED {
-		return fmt.Errorf("scene is required")
-	}
-	if req.GetSenderId() == "" {
-		return fmt.Errorf("sender_id is required")
-	}
-	if len(req.GetTo()) == 0 {
-		return fmt.Errorf("at least one to recipient is required")
-	}
-	if len(req.GetIdempotencyKey()) > utils.MaxIdempotencyKeyLen {
-		return fmt.Errorf("idempotency_key too long (max %d)", utils.MaxIdempotencyKeyLen)
-	}
-	if err := validateAttachments(req.GetAttachments()); err != nil {
-		// validateAttachments already returns xcodes.ErrInvalidAttachment
-		// (category BadRequest, HTTP 400) wrapping the specific violation.
-		// Do not re-wrap with fmt.Errorf — that would hide the typed error
-		// from errors.Is callers. SendEmail wraps with ErrBadRequest below,
-		// which still allows errors.Is(err, ErrInvalidAttachment) via Unwrap.
-		return err
-	}
-	return nil
 }

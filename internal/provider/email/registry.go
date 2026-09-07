@@ -178,3 +178,10 @@ func flattenProviders(vendors map[pb.EmailVendor]map[string]AccountProvider) []A
 	}
 	return out
 }
+
+// BuildProvider constructs the AccountProvider for one account. Exported
+// for the platform registry (internal/registry), which builds live
+// providers from DB rows instead of YAML config.
+func BuildProvider(vendor pb.EmailVendor, ac *AccountConfig) (AccountProvider, error) {
+	return buildProvider(vendor, ac)
+}

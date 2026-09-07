@@ -88,3 +88,91 @@ var ErrAttachmentFetchFailed = xerr.New(
 	502,
 	"failed to fetch attachment",
 )
+
+// ErrAppUnauthorized indicates the request carried no app credentials
+// (x-app-key / x-app-secret metadata), unknown credentials, or a disabled
+// app. Policy-driven sends require an authenticated app identity.
+var ErrAppUnauthorized = xerr.New(
+	"APP_UNAUTHORIZED",
+	xerr.CategoryUnauthorized,
+	401,
+	"missing or invalid app credentials",
+)
+
+// ErrPolicyNotFound indicates no enabled policy is configured for the
+// calling app + channel + scene. The message lists the app's configured
+// scenes so the caller can self-correct. Fail-closed by design — no silent
+// default route.
+var ErrPolicyNotFound = xerr.New(
+	"POLICY_NOT_FOUND",
+	xerr.CategoryNotFound,
+	404,
+	"no send policy configured for this app + scene",
+)
+
+// ErrDailyQuotaExceeded indicates the app hit its per-channel daily
+// send-attempt cap. Attempts (not deliveries) are counted; the counter
+// resets at UTC midnight.
+var ErrDailyQuotaExceeded = xerr.New(
+	"DAILY_QUOTA_EXCEEDED",
+	xerr.CategoryTooManyRequests,
+	429,
+	"daily send quota exceeded",
+)
+
+// ErrTemplateParamMissing indicates template_params is missing a parameter
+// the template declares as required.
+var ErrTemplateParamMissing = xerr.New(
+	"TEMPLATE_PARAM_MISSING",
+	xerr.CategoryBadRequest,
+	400,
+	"required template parameter missing",
+)
+
+// --- admin resource errors ---
+
+// ErrAppNotFound indicates no app matches the requested ID.
+var ErrAppNotFound = xerr.New("APP_NOT_FOUND", xerr.CategoryNotFound, 404, "app not found")
+
+// ErrChannelAccountNotFound indicates no channel account matches the ID.
+var ErrChannelAccountNotFound = xerr.New(
+	"CHANNEL_ACCOUNT_NOT_FOUND",
+	xerr.CategoryNotFound,
+	404,
+	"channel account not found",
+)
+
+// ErrSignatureNotFound indicates no signature matches the ID.
+var ErrSignatureNotFound = xerr.New(
+	"SIGNATURE_NOT_FOUND",
+	xerr.CategoryNotFound,
+	404,
+	"signature not found",
+)
+
+// ErrTemplateNotFound indicates no template matches the ID.
+var ErrTemplateNotFound = xerr.New(
+	"TEMPLATE_NOT_FOUND",
+	xerr.CategoryNotFound,
+	404,
+	"template not found",
+)
+
+// ErrInvalidTemplateContent indicates the template definition failed
+// validation (content shape does not match channel/kind, missing vendor
+// code, etc.).
+var ErrInvalidTemplateContent = xerr.New(
+	"INVALID_TEMPLATE_CONTENT",
+	xerr.CategoryBadRequest,
+	400,
+	"invalid template definition",
+)
+
+// ErrSignatureNotBound indicates a policy route pairs a signature with an
+// account it is not registered (报备) on.
+var ErrSignatureNotBound = xerr.New(
+	"SIGNATURE_NOT_BOUND",
+	xerr.CategoryBadRequest,
+	400,
+	"signature is not bound to the route account",
+)

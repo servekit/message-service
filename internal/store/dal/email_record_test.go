@@ -33,7 +33,7 @@ func newTestEmailRecord(status int32, scene int32, target string) *models.Messag
 		Target:   target,
 		Subject:  "Test Subject",
 		Content:  "Test content body",
-		SenderID: "user:42",
+		AppKey: "user:42",
 		Attempts: 1,
 	}
 }
@@ -70,7 +70,7 @@ func TestCreateEmailRecord(t *testing.T) {
 	assert.Equal(t, int32(pb.EmailScene_EMAIL_SCENE_LOGIN_CODE), found.Scene)
 	assert.Equal(t, int32(pb.MessageStatus_MESSAGE_STATUS_SENT), found.Status)
 	assert.Equal(t, "user@example.com", found.Target)
-	assert.Equal(t, "user:42", found.SenderID)
+	assert.Equal(t, "user:42", found.AppKey)
 	assert.Equal(t, "Test Subject", found.Subject)
 	assert.Equal(t, 1, found.Attempts)
 	assert.False(t, found.CreatedAt.IsZero())
@@ -330,26 +330,3 @@ func TestListEmailsByCursor_ASC(t *testing.T) {
 	assert.Equal(t, int64(3), records[2].ID)
 }
 
-func TestListEmailSenderIDs_Distinct(t *testing.T) {
-	db := setupEmailDB(t)
-	ctx := context.Background()
-
-	r1 := newTestEmailRecord(int32(pb.MessageStatus_MESSAGE_STATUS_SENT),
-		int32(pb.EmailScene_EMAIL_SCENE_NOTIFICATION), "user@example.com")
-	r1.SenderID = "user-service"
-	require.NoError(t, CreateEmailRecord(ctx, db, r1))
-
-	r2 := newTestEmailRecord(int32(pb.MessageStatus_MESSAGE_STATUS_SENT),
-		int32(pb.EmailScene_EMAIL_SCENE_NOTIFICATION), "admin@example.com")
-	r2.SenderID = "user-service" // same sender, different target
-	require.NoError(t, CreateEmailRecord(ctx, db, r2))
-
-	r3 := newTestEmailRecord(int32(pb.MessageStatus_MESSAGE_STATUS_SENT),
-		int32(pb.EmailScene_EMAIL_SCENE_NOTIFICATION), "biz@example.com")
-	r3.SenderID = "pay-service"
-	require.NoError(t, CreateEmailRecord(ctx, db, r3))
-
-	senders, err := ListEmailSenderIDs(ctx, db)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"pay-service", "user-service"}, senders)
-}

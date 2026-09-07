@@ -49,3 +49,14 @@ func NewModule(cfg *config.Config, opts ...option.Option) (*Handler, error) {
 func Migrate(db *gorm.DB) error {
 	return handler.Migrate(db)
 }
+
+// SeedFromConfig imports legacy YAML vendor accounts into the platform
+// channel-account pool (one-shot migration aid):
+//
+//	messageservice.SeedFromConfig(db, cfg)
+//
+// After seeding, remove the account blocks from YAML — runtime reads the
+// pool from the DB only.
+func SeedFromConfig(db *gorm.DB, cfg *config.Config) error {
+	return handler.SeedFromConfig(db, cfg)
+}

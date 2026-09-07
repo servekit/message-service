@@ -17,10 +17,12 @@ type MessageSMSRecord struct {
 	Status     int32  `gorm:"not null;default:0;index"`
 	RegionCode string `gorm:"size:2;column:region_code;not null;index"`
 	Phone      string `gorm:"size:64;column:phone;not null;index"`
-	// SenderID identifies the calling business service (e.g. "user-service",
-	// "pay-service"). NOT the end-user/admin id — the caller is responsible
-	// for recording that in its own audit trail.
-	SenderID       string          `gorm:"size:64;column:sender_id;index"`
+	// AppKey identifies the calling app (the authenticated sender identity
+	// resolved from x-app-key credentials at send time).
+	AppKey string `gorm:"size:64;column:app_key;index"`
+	// SignName is the SMS signature / intl sender ID resolved from the
+	// policy route that handled the send.
+	SignName       string          `gorm:"size:64;column:sign_name"`
 	Content        string          `gorm:"type:text"`
 	TemplateID     string          `gorm:"size:64;column:template_id"`
 	TemplateParams MapStringString `gorm:"type:json;column:template_params"`

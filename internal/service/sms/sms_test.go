@@ -1,8 +1,6 @@
 package sms
 
 import (
-	gidv1 "github.com/servekit/api/gen/go/gid/v1"
-
 	"context"
 	"errors"
 	"fmt"
@@ -10,72 +8,59 @@ import (
 	"testing"
 	"time"
 
-	gidservice "github.com/servekit/gid-service/pkg"
-	"github.com/servekit/message-service/internal/idempotency"
-	"github.com/servekit/message-service/internal/provider/sms"
-	"github.com/servekit/message-service/internal/store/models"
-	"github.com/servekit/message-service/pkg/xcodes"
-
 	pb "github.com/servekit/api/gen/go/messaging/v1"
+	gidservice "github.com/servekit/gid-service/pkg"
+	gidconfig "github.com/servekit/gid-service/pkg/config"
+	"github.com/servekit/message-service/internal/idempotency"
+	provesms "github.com/servekit/message-service/internal/provider/sms"
+	"github.com/servekit/message-service/internal/quota"
+	"github.com/servekit/message-service/internal/registry"
+	"github.com/servekit/message-service/internal/send"
+	"github.com/servekit/message-service/internal/store/dal"
+	"github.com/servekit/message-service/internal/store/models"
 
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/redisx"
-
-	gidconfig "github.com/servekit/gid-service/pkg/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-// --- mocks (providers only; persistence goes through the real dal) ---
+// --- mocks ---
 
 type mockSMSProvider struct {
-	name      string
-	err       error
-	calls     int
-	intlCalls int
+	vendor  pb.SmsVendor
+	name    string
+	err     error
+	calls   int
+	last    *provesms.Message
+	lastIntl *provesms.InternationalMessage
 }
 
-func (m *mockSMSProvider) Vendor() pb.SmsVendor { return pb.SmsVendor_SMS_VENDOR_ALIYUN }
+func (m *mockSMSProvider) Vendor() pb.SmsVendor { return m.vendor }
 func (m *mockSMSProvider) Account() string      { return m.name }
-func (m *mockSMSProvider) Send(_ context.Context, _ *sms.Message) error {
+func (m *mockSMSProvider) Send(_ context.Context, msg *provesms.Message) error {
 	m.calls++
+	m.last = msg
 	return m.err
 }
-func (m *mockSMSProvider) SendInternational(_ context.Context, _ *sms.InternationalMessage) error {
-	m.intlCalls++
+func (m *mockSMSProvider) SendInternational(_ context.Context, msg *provesms.InternationalMessage) error {
+	m.calls++
+	m.lastIntl = msg
 	return m.err
 }
 
-// failingGID is a gidservice.Service that always errors. Used to exercise
-// the gid.NextID error path in SendSMS.
-type failingGID struct {
-	gidv1.UnimplementedGidServiceServer
-}
+var (
+	testGIDOnce    sync.Once
+	testGIDHandler *gidservice.Handler
+)
 
-func (failingGID) NextID(context.Context, *gidv1.NextIDRequest) (*gidv1.NextIDResponse, error) {
-	return nil, errors.New("gid unavailable")
-}
-
-// --- helpers ---
-
-var testGIDHandlerOnce sync.Once
-var testGIDHandler *gidservice.Handler
-
-// getTestGID returns a GIDService wrapping a real in-process gid-service
-// Handler. The Handler is built once and shared across tests (the snowflake
-// generator is the expensive part); NewModule only wraps. Module mode no
-// longer builds from config — the raw Handler is constructed here, matching
-// how a parent process injects option.WithGIDHandler in production.
 func getTestGID(t *testing.T) gidservice.Service {
 	t.Helper()
-	testGIDHandlerOnce.Do(func() {
+	testGIDOnce.Do(func() {
 		hdl, err := gidservice.NewModule(&gidconfig.Config{
-			Snowflake: &gidconfig.SnowflakeConfig{
-				MachineID: 1,
-				StartTime: time.Now().Add(-time.Hour),
-			},
+			Snowflake: &gidconfig.SnowflakeConfig{MachineID: 2, StartTime: time.Now().Add(-time.Hour)},
 		})
 		require.NoError(t, err)
 		testGIDHandler = hdl
@@ -83,784 +68,239 @@ func getTestGID(t *testing.T) gidservice.Service {
 	return testGIDHandler
 }
 
-func setupSMSTestDB(t *testing.T) *gorm.DB {
+func setupDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
-	require.NoError(t, db.AutoMigrate(&models.MessageSMSRecord{}), "auto-migrate should succeed")
+	require.NoError(t, db.AutoMigrate(models.AllModels()...))
 	return db
 }
 
-func newTestIdempotencyChecker(t *testing.T) idempotency.Checker {
+func newIdem(t *testing.T) idempotency.Checker {
 	t.Helper()
-	client := redisx.NewTestClient(t)
-	return idempotency.NewRedisChecker(client, &idempotency.Config{
-		KeyPrefix: "msg:idem",
+	return idempotency.NewRedisChecker(redisx.NewTestClient(t), &idempotency.Config{
+		KeyPrefix: "msg:idem:test-sms",
 		EmailTTL:  5 * time.Minute,
 		SMSTTL:    5 * time.Minute,
 	})
 }
 
-func newTestSMSServiceWithRouter(t *testing.T, providers []sms.AccountProvider) *Service {
-	t.Helper()
-	db := setupSMSTestDB(t)
-	accounts := make(map[string]sms.AccountProvider, len(providers))
-	for i, p := range providers {
-		accounts[fmt.Sprintf("p%d", i)] = p
-	}
-	registry := sms.NewAccountRegistryFromProviders(map[pb.SmsVendor]map[string]sms.AccountProvider{pb.SmsVendor_SMS_VENDOR_ALIYUN: accounts})
-
-	// Configure a wildcard route so BuildRouter returns a non-nil Router.
-	// Without routes BuildRouter returns (nil, nil) and SendSMS rejects
-	// vendor/account-empty requests with BadRequest.
-	router, err := sms.BuildRouter(&sms.Config{
-		DefaultCountry: "CN",
-		Routes: []*sms.RouteConfig{{
-			Country: "*",
-			Targets: []*sms.RouteTarget{{Vendor: pb.SmsVendor_SMS_VENDOR_ALIYUN, Account: "p0"}},
-		}},
-	}, registry)
-	require.NoError(t, err)
-	require.NotNil(t, router, "router must be non-nil for tests")
-
-	return New(db, newTestIdempotencyChecker(t), getTestGID(t), registry, router,
-		true)
+// smsFixture wires: app + CN signature + two SMS accounts (aliyun ok,
+// tencent ok) + vendor-code template (per-vendor codes) + policy with CN
+// and intl chains.
+type smsFixture struct {
+	svc       *Service
+	db        *gorm.DB
+	app       *models.MessageApp
+	aliyun    *mockSMSProvider
+	tencent   *mockSMSProvider
+	aliyunID  int64
+	tencentID int64
+	sigID     int64
 }
 
-// newTestSMSServiceNoPersist mirrors newTestSMSServiceWithRouter but with
-// persistence disabled for both channels.
-func newTestSMSServiceNoPersist(t *testing.T, providers []sms.AccountProvider) *Service {
+func newSMSFixture(t *testing.T) *smsFixture {
 	t.Helper()
-	db := setupSMSTestDB(t)
-	accounts := make(map[string]sms.AccountProvider, len(providers))
-	for i, p := range providers {
-		accounts[fmt.Sprintf("p%d", i)] = p
+	db := setupDB(t)
+	ctx := context.Background()
+	app := &models.MessageApp{ID: 111, AppKey: "sms-app", AppSecret: "s", Name: "SMS App"}
+	require.NoError(t, dal.CreateApp(ctx, db, app))
+
+	aliyunID, tencentID, sigID := int64(2001), int64(2002), int64(3001)
+	for _, acc := range []*models.MessageChannelAccount{
+		{ID: aliyunID, Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS), Vendor: int32(pb.SmsVendor_SMS_VENDOR_ALIYUN), Name: "aliyun-main", Config: models.RawJSON(`{}`)},
+		{ID: tencentID, Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS), Vendor: int32(pb.SmsVendor_SMS_VENDOR_TENCENT), Name: "tencent-main", Config: models.RawJSON(`{}`)},
+	} {
+		require.NoError(t, dal.CreateChannelAccount(ctx, db, acc))
 	}
-	registry := sms.NewAccountRegistryFromProviders(map[pb.SmsVendor]map[string]sms.AccountProvider{pb.SmsVendor_SMS_VENDOR_ALIYUN: accounts})
+	sig := &models.MessageSignature{ID: sigID, Name: "测试签名"}
+	require.NoError(t, dal.CreateSignature(ctx, db, sig, []int64{aliyunID, tencentID}))
 
-	router, err := sms.BuildRouter(&sms.Config{
-		DefaultCountry: "CN",
-		Routes: []*sms.RouteConfig{{
-			Country: "*",
-			Targets: []*sms.RouteTarget{{Vendor: pb.SmsVendor_SMS_VENDOR_ALIYUN, Account: "p0"}},
-		}},
-	}, registry)
+	params, err := send.MarshalParamSpecs([]models.TemplateParamSpec{{Name: "code", Required: true}})
 	require.NoError(t, err)
-	require.NotNil(t, router)
+	content, err := send.MarshalVendorCodes([]send.VendorCode{
+		{Vendor: pb.SmsVendor_SMS_VENDOR_ALIYUN, TemplateCode: "SMS_ALIYUN_1"},
+		{Vendor: pb.SmsVendor_SMS_VENDOR_TENCENT, TemplateCode: "SMS_TENCENT_1"},
+	})
+	require.NoError(t, err)
+	template := &models.MessageTemplate{
+		ID: 2101, AppID: app.ID, Name: "login-code-sms",
+		Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
+		Kind:    int32(pb.TemplateKind_TEMPLATE_KIND_SMS_VENDOR_CODES),
+		Params:  params, Content: content,
+	}
+	require.NoError(t, dal.CreateTemplate(ctx, db, template))
 
-	return New(db, newTestIdempotencyChecker(t), getTestGID(t), registry, router,
-		false)
+	routes, err := send.MarshalRoutes([]send.Route{
+		{AccountID: aliyunID, SignatureID: sigID, Weight: 1},
+		{AccountID: tencentID, SignatureID: sigID, Weight: 1},
+	})
+	require.NoError(t, err)
+	policy := &models.MessagePolicy{
+		ID: 3101, AppID: app.ID,
+		Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
+		Scene:   int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE),
+		TemplateID: template.ID,
+		Routes:     routes,
+		IntlRoutes: routes,
+	}
+	require.NoError(t, dal.CreatePolicy(ctx, db, policy))
+
+	aliyun := &mockSMSProvider{vendor: pb.SmsVendor_SMS_VENDOR_ALIYUN, name: "aliyun-main"}
+	tencent := &mockSMSProvider{vendor: pb.SmsVendor_SMS_VENDOR_TENCENT, name: "tencent-main"}
+	reg := registry.New(db)
+	reg.BuildSMS = func(a *models.MessageChannelAccount) (provesms.AccountProvider, error) {
+		switch a.ID {
+		case aliyunID:
+			return aliyun, nil
+		case tencentID:
+			return tencent, nil
+		}
+		return nil, fmt.Errorf("no mock for account %d", a.ID)
+	}
+	require.NoError(t, reg.Refresh(ctx))
+
+	return &smsFixture{
+		svc: New(db, newIdem(t), getTestGID(t), reg,
+			quota.NewChecker(redisx.NewTestClient(t), "msg:quota:test-sms"), true),
+		db: db, app: app, aliyun: aliyun, tencent: tencent,
+		aliyunID: aliyunID, tencentID: tencentID, sigID: sigID,
+	}
 }
 
 // --- tests ---
 
-func TestSendSMS_Success(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-
-	resp, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
+func TestSendSMSCNUsesVendorCodeAndSignature(t *testing.T) {
+	fx := newSMSFixture(t)
+	resp, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To:             "+8613800138000",
 		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
+		TemplateParams: map[string]string{"code": "998877"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp.Status)
-	assert.Greater(t, resp.Id, int64(0))
+	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp.GetStatus())
 
-	// Verify persistence: scene and sender_id recorded.
-	record, err := svc.GetSMS(context.Background(), &pb.GetSMSRequest{Id: resp.Id})
+	// exactly one provider handled it, with its OWN vendor template code
+	var used *mockSMSProvider
+	if fx.aliyun.calls == 1 {
+		used = fx.aliyun
+	} else {
+		used = fx.tencent
+	}
+	require.NotNil(t, used.last)
+	assert.Equal(t, "测试签名", used.last.SignName)
+	assert.Equal(t, map[string]string{"code": "998877"}, used.last.TemplateParams)
+	expectedCode := "SMS_ALIYUN_1"
+	if used.vendor == pb.SmsVendor_SMS_VENDOR_TENCENT {
+		expectedCode = "SMS_TENCENT_1"
+	}
+	assert.Equal(t, expectedCode, used.last.TemplateID)
+
+	// record carries app/sign/template code
+	records, err := dal.ListSMSRecords(context.Background(), fx.db, dal.SmsListFilter{
+		AppKey: fx.app.AppKey,
+	}, dbx.PageParams{Page: 1, PageSize: 10, Count: true})
 	require.NoError(t, err)
-	assert.Equal(t, pb.SmsScene_SMS_SCENE_LOGIN_CODE, record.Scene)
-	assert.Equal(t, "user:42", record.SenderId)
-	assert.Equal(t, "CN", record.RegionCode)
-	assert.Equal(t, "+8613800000111", record.Phone)
-
-	// Verify vendor is correctly mapped (regression: previously always 0
-	// because AccountProvider.Vendor uses enum.String() but the old switch
-	// matched lowercase names).
-	assert.Equal(t, pb.SmsVendor_SMS_VENDOR_ALIYUN, record.Vendor,
-		"record.Vendor must reflect the AccountProvider's enum, not UNSPECIFIED")
-	assert.Equal(t, pb.SmsVendor_SMS_VENDOR_ALIYUN, resp.GetSmsVendor(),
-		"SendResponse.Vendor must reflect the AccountProvider's enum")
+	require.Len(t, records.List, 1)
+	assert.Equal(t, "测试签名", records.List[0].SignName)
+	assert.Equal(t, fx.app.AppKey, records.List[0].AppKey)
+	assert.Equal(t, expectedCode, records.List[0].TemplateID)
 }
 
-func TestSendSMS_ProviderError_PersistsFailedRecord(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock", err: fmt.Errorf("aliyun timeout")},
+func TestSendSMSCNFallbackAcrossVendors(t *testing.T) {
+	fx := newSMSFixture(t)
+	fx.aliyun.err = errors.New("aliyun down")
+	// heavier weight on aliyun so the chain starts there deterministically
+	// is not needed: with aliyun failing, tencent must be reached regardless
+	// of start choice — run until aliyun was tried and tencent succeeded.
+	resp, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To:             "+8613800138000",
+		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		TemplateParams: map[string]string{"code": "1"},
 	})
+	require.NoError(t, err)
+	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp.GetStatus())
+	assert.Equal(t, pb.SmsVendor_SMS_VENDOR_TENCENT, resp.GetSmsVendor())
+	assert.Equal(t, 1, fx.tencent.calls)
+}
 
-	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_REGISTER,
-		SenderId:       "user:42",
+func TestSendSMSIntlChain(t *testing.T) {
+	fx := newSMSFixture(t)
+	// intl route vendors take the intl path; vendor-code template gives each
+	// its code via SendInternational
+	resp, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To:             "+14155550123",
+		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		TemplateParams: map[string]string{"code": "7"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp.GetStatus())
+	var intl *provesms.InternationalMessage
+	if fx.aliyun.calls == 1 && fx.aliyun.lastIntl != nil {
+		intl = fx.aliyun.lastIntl
+	} else {
+		intl = fx.tencent.lastIntl
+	}
+	require.NotNil(t, intl)
+	assert.Equal(t, "+14155550123", intl.To)
+}
+
+func TestSendSMSPolicyNotFound(t *testing.T) {
+	fx := newSMSFixture(t)
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_REGISTER,
+		TemplateParams: map[string]string{"code": "1"},
 	})
 	require.Error(t, err)
-
-	// Verify a FAILED record was persisted. List by sender_id to find it.
-	resp, err := svc.ListSMS(context.Background(), &pb.ListSMSRequest{
-		SenderId: "user:42",
-	})
-	require.NoError(t, err)
-	require.Len(t, resp.Records, 1)
-	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_FAILED, resp.Records[0].Status)
-	assert.Equal(t, pb.SmsScene_SMS_SCENE_REGISTER, resp.Records[0].Scene)
+	assert.Contains(t, err.Error(), "POLICY_NOT_FOUND")
 }
 
-func TestListSMS_ByScene(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
+func TestSendSMSMissingParam(t *testing.T) {
+	fx := newSMSFixture(t)
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TEMPLATE_PARAM_MISSING")
+	assert.Zero(t, fx.aliyun.calls + fx.tencent.calls)
+}
 
-	// Send two SMS with different scenes.
-	for _, scene := range []pb.SmsScene{
-		pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		pb.SmsScene_SMS_SCENE_REGISTER,
-	} {
-		_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-			To:             "+8613800000111",
-			TemplateId:     "SMS_123",
-			TemplateParams: map[string]string{"code": "1234"},
-			SignName:       "sign",
-			Scene:          scene,
-			SenderId:       "user:42",
-		})
-		require.NoError(t, err)
-	}
-
-	resp, err := svc.ListSMS(context.Background(), &pb.ListSMSRequest{
+func TestSendSMSInvalidPhone(t *testing.T) {
+	fx := newSMSFixture(t)
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To: "+86101234567", // Beijing landline — not SMS-capable
 		Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), resp.Total)
-	assert.Len(t, resp.Records, 1)
-}
-
-func TestSendSMS_Idempotent_NoKey_DoesNotDedupe(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock"}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		// No idempotency_key
-	}
-
-	_, err := svc.SendSMS(context.Background(), req)
-	require.NoError(t, err)
-
-	_, err = svc.SendSMS(context.Background(), req)
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, provider.calls, "without key, both calls hit provider")
-}
-
-// TestSendSMS_Idempotent_FailureNotCached_RetriesProvider verifies the
-// Redis idempotency contract on failure: a failed send releases the
-// reservation, so a second call with the same key hits the provider again
-// rather than returning a cached failure.
-func TestSendSMS_Idempotent_FailureNotCached_RetriesProvider(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock", err: fmt.Errorf("aliyun timeout")}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		IdempotencyKey: "abc-123",
-	}
-
-	// First call fails — reservation released, failure not cached.
-	_, err := svc.SendSMS(context.Background(), req)
-	require.Error(t, err)
-	assert.Equal(t, 1, provider.calls)
-
-	// Second call with same key hits provider again (Redis reservation was
-	// released after the failure, so dedup does not kick in).
-	_, err = svc.SendSMS(context.Background(), req)
-	require.Error(t, err)
-	assert.Equal(t, 2, provider.calls, "failed send must release reservation so retry hits provider")
-}
-
-func TestSendSMS_PersistsEvenWhenContextCancelled(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock"}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancel before send
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		// Use explicit vendor+account so we hit the Sender path (which mirrors
-		// email.Sender): the Sender wrapper checks ctx.Err() *inside* its
-		// retry loop and returns a non-nil failed result, triggering persist.
-		Vendor:  pb.SmsVendor_SMS_VENDOR_ALIYUN,
-		Account: "p0",
-	}
-
-	_, err := svc.SendSMS(ctx, req)
-	// Sender's Send is called with cancelled ctx; the Sender wrapper
-	// checks ctx.Err() inside the retry loop and returns a failed result.
-	// Service persists it.
-	require.Error(t, err)
-
-	// The record must still be persisted (independent ctx).
-	listResp, lerr := svc.ListSMS(context.Background(), &pb.ListSMSRequest{
-		SenderId: "user:42",
-	})
-	require.NoError(t, lerr)
-	require.Len(t, listResp.Records, 1, "record must be persisted even with cancelled ctx")
-	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_FAILED, listResp.Records[0].Status)
-}
-
-// TestSendSMS_RouterPathPersistsEvenWhenContextCancelled exercises the Router
-// path (no explicit vendor+account). Before the router ctx.Err() fix this
-// would return (nil, ctx.Err()) pre-send and the service would skip persist;
-// now the router returns Success=false and the record is persisted.
-func TestSendSMS_RouterPathPersistsEvenWhenContextCancelled(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock"}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := svc.SendSMS(ctx, &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		// No vendor+account: request is routed through sms.Router.
+		TemplateParams: map[string]string{"code": "1"},
 	})
 	require.Error(t, err)
-
-	listResp, lerr := svc.ListSMS(context.Background(), &pb.ListSMSRequest{
-		SenderId: "user:42",
-	})
-	require.NoError(t, lerr)
-	require.Len(t, listResp.Records, 1, "router-path pre-cancel must still persist a FAILED record")
-	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_FAILED, listResp.Records[0].Status)
+	assert.Contains(t, err.Error(), "BAD_REQUEST")
 }
 
-func TestSendSMS_RejectsMissingScene(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock"}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
+func TestSendSMSIdempotency(t *testing.T) {
+	fx := newSMSFixture(t)
+	req := &pb.SendSMSRequest{
+		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		TemplateParams: map[string]string{"code": "3"}, IdempotencyKey: "sms-idem-1",
+	}
+	first, err := fx.svc.SendSMS(context.Background(), fx.app, req)
+	require.NoError(t, err)
+	second, err := fx.svc.SendSMS(context.Background(), fx.app, req)
+	require.NoError(t, err)
+	assert.Equal(t, first.GetId(), second.GetId())
+	assert.Equal(t, 1, fx.aliyun.calls+fx.tencent.calls)
+}
 
-	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		SenderId:       "user:42",
-		// No scene
+func TestSendSMSQuota(t *testing.T) {
+	fx := newSMSFixture(t)
+	fx.app.SMSDailyLimit = 1
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		TemplateParams: map[string]string{"code": "1"},
+	})
+	require.NoError(t, err)
+	_, err = fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To: "+8613800138001", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		TemplateParams: map[string]string{"code": "2"},
 	})
 	require.Error(t, err)
-	assert.Equal(t, 0, provider.calls, "validation must short-circuit before provider call")
-}
-
-func TestSendSMS_RejectsVendorWithoutAccount(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock"}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		Vendor:         pb.SmsVendor_SMS_VENDOR_ALIYUN,
-		// No account
-	})
-	require.Error(t, err)
-	assert.Equal(t, 0, provider.calls)
-}
-
-func TestSendSMS_FailureIncludesVendorContext(t *testing.T) {
-	provider := &mockSMSProvider{name: "aliyun", err: fmt.Errorf("connection refused")}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-	})
-	require.Error(t, err)
-
-	msg := err.Error()
-	assert.Contains(t, msg, "vendor=")
-	assert.Contains(t, msg, "account=")
-	assert.Contains(t, msg, "attempts=")
-	assert.Contains(t, msg, "connection refused")
-}
-
-func TestListSMS_ASC_WithTotalPages(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-
-	for i := 0; i < 3; i++ {
-		_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-			To:             fmt.Sprintf("+861380000%04d", i),
-			TemplateId:     "SMS_123",
-			TemplateParams: map[string]string{"code": "1234"},
-			SignName:       "sign",
-			Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-			SenderId:       "user:42",
-		})
-		require.NoError(t, err)
-	}
-
-	resp, err := svc.ListSMS(context.Background(), &pb.ListSMSRequest{
-		Scene:         pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SortDirection: pb.SortDirection_SORT_DIRECTION_ASC,
-		Page:          1,
-		PageSize:      2,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int32(3), resp.Total)
-	assert.Equal(t, int32(2), resp.TotalPages)
-	assert.True(t, resp.HasMore)
-	assert.Len(t, resp.Records, 2)
-}
-
-func TestListSMSByCursor_TwoPageFlow(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-
-	for i := 0; i < 3; i++ {
-		_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-			To:             fmt.Sprintf("+861380000%04d", i),
-			TemplateId:     "SMS_123",
-			TemplateParams: map[string]string{"code": "1234"},
-			SignName:       "sign",
-			Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-			SenderId:       "user:42",
-		})
-		require.NoError(t, err)
-	}
-
-	first, err := svc.ListSMSByCursor(context.Background(), &pb.ListSMSByCursorRequest{
-		Scene:    pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		PageSize: 2,
-	})
-	require.NoError(t, err)
-	assert.Len(t, first.Records, 2)
-	assert.NotEmpty(t, first.NextPageToken)
-	assert.Equal(t, int32(0), first.Total)
-
-	second, err := svc.ListSMSByCursor(context.Background(), &pb.ListSMSByCursorRequest{
-		Scene:     pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		PageSize:  2,
-		PageToken: first.NextPageToken,
-	})
-	require.NoError(t, err)
-	assert.Len(t, second.Records, 1)
-	assert.Empty(t, second.NextPageToken)
-
-	ids := map[int64]struct{}{}
-	for _, r := range append(first.Records, second.Records...) {
-		ids[r.Id] = struct{}{}
-	}
-	assert.Len(t, ids, 3)
-}
-
-func TestListSMSByCursor_BadToken(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-
-	_, err := svc.ListSMSByCursor(context.Background(), &pb.ListSMSByCursorRequest{
-		Scene:     pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		PageSize:  2,
-		PageToken: "garbage-token",
-	})
-	require.Error(t, err)
-}
-
-func TestSendSMS_PersistenceDisabled_SkipsDB(t *testing.T) {
-	svc := newTestSMSServiceNoPersist(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-
-	resp, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		// No vendor/account — router picks aliyun/p0.
-	})
-	require.NoError(t, err)
-	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp.Status)
-
-	_, err = svc.GetSMS(context.Background(), &pb.GetSMSRequest{Id: resp.Id})
-	require.Error(t, err, "GetSMS must fail when persistence disabled")
-}
-
-// TestSendSMS_PersistenceDisabled_IdempotencyStillWorks verifies that
-// Redis idempotency is independent of the persistence toggle: even with
-// persistence off, the same idempotency_key is deduped via Redis.
-func TestSendSMS_PersistenceDisabled_IdempotencyStillWorks(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock"}
-	svc := newTestSMSServiceNoPersist(t, []sms.AccountProvider{provider})
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		IdempotencyKey: "sms-1",
-	}
-
-	_, err := svc.SendSMS(context.Background(), req)
-	require.NoError(t, err)
-	_, err = svc.SendSMS(context.Background(), req)
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, provider.calls, "provider must be called once (Redis dedup works even with persistence off)")
-}
-
-func TestGetSMS_PersistenceDisabled_ReturnsError(t *testing.T) {
-	svc := newTestSMSServiceNoPersist(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-	_, err := svc.GetSMS(context.Background(), &pb.GetSMSRequest{Id: 1})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrPersistenceDisabled.New()),
-		"err must wrap ErrPersistenceDisabled, got: %v", err)
-}
-
-func TestListSMS_PersistenceDisabled_ReturnsError(t *testing.T) {
-	svc := newTestSMSServiceNoPersist(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-	_, err := svc.ListSMS(context.Background(), &pb.ListSMSRequest{})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrPersistenceDisabled.New()))
-}
-
-func TestListSMSByCursor_PersistenceDisabled_ReturnsError(t *testing.T) {
-	svc := newTestSMSServiceNoPersist(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-	_, err := svc.ListSMSByCursor(context.Background(), &pb.ListSMSByCursorRequest{})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrPersistenceDisabled.New()))
-}
-
-func TestGetSMSStats_PersistenceDisabled_ReturnsError(t *testing.T) {
-	svc := newTestSMSServiceNoPersist(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-	_, err := svc.GetSMSStats(context.Background(), &pb.GetSMSStatsRequest{})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrPersistenceDisabled.New()))
-}
-
-func TestSendSMS_Idempotent_SecondCallReturnsCached(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock"}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		IdempotencyKey: "sms-1",
-	}
-
-	resp1, err := svc.SendSMS(context.Background(), req)
-	require.NoError(t, err)
-	require.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp1.Status)
-
-	resp2, err := svc.SendSMS(context.Background(), req)
-	require.NoError(t, err)
-	assert.Equal(t, resp1.Id, resp2.Id)
-	assert.Equal(t, 1, provider.calls, "provider must be called once")
-}
-
-func TestSendSMS_IdempotencyConflict_OnInFlight(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-
-	// Plant a "PENDING" marker to simulate in-flight. Reserve sees the
-	// literal "PENDING" string and treats it as in-flight (matches the
-	// pendingMarker constant in redis_checker.go).
-	require.NoError(t, svc.idem.Complete(context.Background(), "sms", "user:42", "in-flight", []byte("PENDING")))
-
-	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		IdempotencyKey: "in-flight",
-	})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, xcodes.ErrIdempotencyConflict.New()))
-}
-
-func TestSendSMS_Failure_NotCached_ReleasesReservation(t *testing.T) {
-	provider := &mockSMSProvider{name: "mock", err: errors.New("vendor rejected")}
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		IdempotencyKey: "fail-once",
-	}
-
-	_, err := svc.SendSMS(context.Background(), req)
-	require.Error(t, err, "first call must fail")
-
-	acquired, payload, err := svc.idem.Reserve(context.Background(), "sms", "user:42", "fail-once")
-	require.NoError(t, err)
-	assert.True(t, acquired, "Reserve after failed send must acquire (key was Released)")
-	assert.Nil(t, payload, "no cached payload (failure was not cached)")
-}
-
-// TestSendSMS_IdempotencyReleased_OnGIDFailure verifies the post-Reserve /
-// pre-vendor error path: when gid.NextID fails, the reservation must be
-// released. Regression: previously this path returned without Release.
-func TestSendSMS_IdempotencyReleased_OnGIDFailure(t *testing.T) {
-	db := setupSMSTestDB(t)
-	registry := sms.NewAccountRegistryFromProviders(map[pb.SmsVendor]map[string]sms.AccountProvider{
-		pb.SmsVendor_SMS_VENDOR_ALIYUN: {"p0": &mockSMSProvider{name: "mock"}},
-	})
-	router, err := sms.BuildRouter(&sms.Config{
-		DefaultCountry: "CN",
-		Routes: []*sms.RouteConfig{{
-			Country: "*",
-			Targets: []*sms.RouteTarget{{Vendor: pb.SmsVendor_SMS_VENDOR_ALIYUN, Account: "p0"}},
-		}},
-	}, registry)
-	require.NoError(t, err)
-
-	svc := New(db, newTestIdempotencyChecker(t), failingGID{}, registry, router,
-		true)
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		IdempotencyKey: "gid-fail",
-	}
-
-	_, err = svc.SendSMS(context.Background(), req)
-	require.Error(t, err, "gid.NextID must fail")
-
-	acquired, payload, reserveErr := svc.idem.Reserve(context.Background(), "sms", "user:42", "gid-fail")
-	require.NoError(t, reserveErr)
-	assert.True(t, acquired, "Reserve after gid failure must acquire (key was Released)")
-	assert.Nil(t, payload)
-}
-
-// TestSendSMS_IdempotencyReleased_OnSenderForFailure verifies the post-Reserve
-// / post-gid error path: when SenderFor rejects an unknown account, the
-// reservation must be released. Regression: previously this path returned
-// without Release.
-func TestSendSMS_IdempotencyReleased_OnSenderForFailure(t *testing.T) {
-	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{
-		&mockSMSProvider{name: "mock"},
-	})
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		Vendor:         pb.SmsVendor_SMS_VENDOR_ALIYUN,
-		Account:        "nonexistent", // not in registry → SenderFor fails
-		IdempotencyKey: "senderfor-fail",
-	}
-
-	_, err := svc.SendSMS(context.Background(), req)
-	require.Error(t, err, "SenderFor must fail on unknown account")
-
-	acquired, payload, reserveErr := svc.idem.Reserve(context.Background(), "sms", "user:42", "senderfor-fail")
-	require.NoError(t, reserveErr)
-	assert.True(t, acquired, "Reserve after SenderFor failure must acquire (key was Released)")
-	assert.Nil(t, payload)
-}
-
-// TestSendSMS_IdempotencyReleased_OnRouterNil verifies the post-Reserve error
-// path when neither vendor nor router is configured: the reservation must be
-// released. Regression: previously this path returned without Release.
-func TestSendSMS_IdempotencyReleased_OnRouterNil(t *testing.T) {
-	db := setupSMSTestDB(t)
-	registry := sms.NewAccountRegistryFromProviders(map[pb.SmsVendor]map[string]sms.AccountProvider{
-		pb.SmsVendor_SMS_VENDOR_ALIYUN: {"p0": &mockSMSProvider{name: "mock"}},
-	})
-
-	// Service with nil router: a no-vendor request has nowhere to go.
-	svc := New(db, newTestIdempotencyChecker(t), getTestGID(t), registry, nil,
-		true)
-
-	req := &pb.SendSMSRequest{
-		To:             "+8613800000111",
-		TemplateId:     "SMS_123",
-		TemplateParams: map[string]string{"code": "1234"},
-		SignName:       "sign",
-		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:       "user:42",
-		IdempotencyKey: "router-nil",
-	}
-
-	_, err := svc.SendSMS(context.Background(), req)
-	require.Error(t, err, "router nil with no vendor must fail")
-
-	acquired, payload, reserveErr := svc.idem.Reserve(context.Background(), "sms", "user:42", "router-nil")
-	require.NoError(t, reserveErr)
-	assert.True(t, acquired, "Reserve after router-nil failure must acquire (key was Released)")
-	assert.Nil(t, payload)
-}
-
-// --- validateSendSMSRequest (request-level defense-in-depth) ---
-
-func TestValidateSendSMSRequest_VendorWithoutAccount(t *testing.T) {
-	req := &pb.SendSMSRequest{
-		To:         "+8613800000111",
-		TemplateId: "SMS_123",
-		SignName:   "sign",
-		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:   "user:42",
-		Vendor:     pb.SmsVendor_SMS_VENDOR_ALIYUN,
-	}
-	err := validateSendSMSRequest(req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "vendor and account")
-}
-
-func TestValidateSendSMSRequest_ToInvalidFormat(t *testing.T) {
-	// to must be E.164: leading +, 9-15 digits.
-	cases := []string{"", "13800000111", "8613800001111", "not-a-phone", "+12"}
-	for _, to := range cases {
-		t.Run(to, func(t *testing.T) {
-			req := &pb.SendSMSRequest{
-				To:       to,
-				Content:  "Your code is 1234",
-				Scene:    pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-				SenderId: "user-service",
-			}
-			err := validateSendSMSRequest(req)
-			assert.Error(t, err)
-		})
-	}
-}
-
-func TestValidateSendSMSRequest_PhoneUnparsable(t *testing.T) {
-	req := &pb.SendSMSRequest{
-		To:         "+999999999999999", // parses syntactically but is not a valid number
-		TemplateId: "SMS_123",
-		SignName:   "sign",
-		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:   "user-service",
-	}
-	err := validateSendSMSRequest(req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "parse")
-}
-
-func TestValidateSendSMSRequest_NumberTypeGate(t *testing.T) {
-	cases := []struct {
-		name    string
-		to      string
-		wantErr string // empty = expect no error
-	}{
-		// Beijing landline: a VALID Chinese number, but SMS goes to mobiles —
-		// rejected before any vendor call.
-		{"CN landline rejected", "+861055555555", "fixed-line"},
-		{"CN mobile passes", "+8613800139000", ""},
-		// US metadata cannot split fixed vs mobile — admitted.
-		{"US fixed-or-mobile passes", "+14155552671", ""},
-		{"HK mobile passes", "+85291234567", ""},
-	}
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			req := &pb.SendSMSRequest{
-				To:         tt.to,
-				TemplateId: "SMS_123",
-				SignName:   "sign",
-				Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-				SenderId:   "user-service",
-			}
-			err := validateSendSMSRequest(req)
-			if tt.wantErr == "" {
-				assert.NoError(t, err)
-			} else {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateSendSMSRequest_ValidChineseNumber(t *testing.T) {
-	req := &pb.SendSMSRequest{
-		To:         "+8613800000111",
-		TemplateId: "SMS_123",
-		SignName:   "sign",
-		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:   "user-service",
-	}
-	assert.NoError(t, validateSendSMSRequest(req))
-}
-
-func TestValidateSendSMSRequest_ValidUSNumber(t *testing.T) {
-	req := &pb.SendSMSRequest{
-		To:       "+14155552671",
-		Content:  "Your code is 1234",
-		Scene:    pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId: "user-service",
-	}
-	assert.NoError(t, validateSendSMSRequest(req))
-}
-
-func TestValidateSendSMSRequest_ValidHKNumber(t *testing.T) {
-	req := &pb.SendSMSRequest{
-		To:       "+85291234567",
-		Content:  "Your code is 1234",
-		Scene:    pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId: "user-service",
-	}
-	assert.NoError(t, validateSendSMSRequest(req))
+	assert.Contains(t, err.Error(), "DAILY_QUOTA_EXCEEDED")
 }

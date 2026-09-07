@@ -91,6 +91,7 @@ var _ = genconfig.Config{
 	FieldTypeMap: map[any]any{
 		sql.NullTime{}:    field.Time{},
 		MapStringString{}: field.Field[map[string]string]{},
+		RawJSON{}:         field.Bytes{},
 	},
 }
 
@@ -100,5 +101,11 @@ func AllModels() []any {
 		&MessageEmailRecord{},
 		&MessageSMSRecord{},
 		&MessageEmailRecordAttachment{},
+		&MessageApp{},
+		&MessageChannelAccount{},
+		&MessageSignature{},
+		&MessageSignatureAccount{},
+		&MessageTemplate{},
+		&MessagePolicy{},
 	}
 }

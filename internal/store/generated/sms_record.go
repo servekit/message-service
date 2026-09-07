@@ -15,7 +15,8 @@ var MessageSMSRecord = struct {
 	Status         field.Number[int32]
 	RegionCode     field.String
 	Phone          field.String
-	SenderID       field.String
+	AppKey         field.String
+	SignName       field.String
 	Content        field.String
 	TemplateID     field.String
 	TemplateParams field.Field[any]
@@ -33,7 +34,8 @@ var MessageSMSRecord = struct {
 	Status:         field.Number[int32]{}.WithColumn("status"),
 	RegionCode:     field.String{}.WithColumn("region_code"),
 	Phone:          field.String{}.WithColumn("phone"),
-	SenderID:       field.String{}.WithColumn("sender_id"),
+	AppKey:         field.String{}.WithColumn("app_key"),
+	SignName:       field.String{}.WithColumn("sign_name"),
 	Content:        field.String{}.WithColumn("content"),
 	TemplateID:     field.String{}.WithColumn("template_id"),
 	TemplateParams: field.Field[any]{}.WithColumn("template_params"),

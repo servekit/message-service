@@ -15,7 +15,7 @@ var MessageEmailRecord = struct {
 	Scene          field.Number[int32]
 	Status         field.Number[int32]
 	Target         field.String
-	SenderID       field.String
+	AppKey         field.String
 	Cc             field.Field[models.StringSlice]
 	Bcc            field.Field[models.StringSlice]
 	Subject        field.String
@@ -37,7 +37,7 @@ var MessageEmailRecord = struct {
 	Scene:          field.Number[int32]{}.WithColumn("scene"),
 	Status:         field.Number[int32]{}.WithColumn("status"),
 	Target:         field.String{}.WithColumn("target"),
-	SenderID:       field.String{}.WithColumn("sender_id"),
+	AppKey:         field.String{}.WithColumn("app_key"),
 	Cc:             field.Field[models.StringSlice]{}.WithColumn("cc"),
 	Bcc:            field.Field[models.StringSlice]{}.WithColumn("bcc"),
 	Subject:        field.String{}.WithColumn("subject"),

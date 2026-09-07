@@ -9,8 +9,8 @@
 package service
 
 import (
-	"context"
 	"fmt"
+	"context"
 	"log/slog"
 	"time"
 
@@ -20,11 +20,15 @@ import (
 	pb "github.com/servekit/api/gen/go/messaging/v1"
 	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
+	"github.com/servekit/message-service/internal/appauth"
 	"github.com/servekit/message-service/internal/idempotency"
-	provemail "github.com/servekit/message-service/internal/provider/email"
-	provesms "github.com/servekit/message-service/internal/provider/sms"
+	"github.com/servekit/message-service/internal/jobs"
+	"github.com/servekit/message-service/internal/quota"
+	"github.com/servekit/message-service/internal/registry"
+	"github.com/servekit/message-service/internal/service/admin"
 	svcemail "github.com/servekit/message-service/internal/service/email"
 	svcsms "github.com/servekit/message-service/internal/service/sms"
+	"github.com/servekit/message-service/internal/store/models"
 	"github.com/servekit/message-service/internal/version"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
@@ -32,11 +36,19 @@ import (
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/lifecycle"
 	"github.com/servekit/go-common/redisx"
+	"github.com/servekit/message-service/pkg/xcodes"
+
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// registryRefreshSpec is the snapshot-convergence cron: cross-node admin
+// mutations (or a failed local refresh) converge within a minute.
+const registryRefreshSpec = "*/1 * * * *"
+
 // Service holds message-service business state: one subpackage instance per
-// channel (email + sms). The root itself only does resource resolve and
-// one-line RPC delegation; business logic lives in the subpackages.
+// channel (email + sms) plus the admin surface. The root itself only does
+// resource resolve, app authentication for the send facades, and one-line
+// RPC delegation; business logic lives in the subpackages.
 type Service struct {
 	cfg *config.Config
 	mgr *lifecycle.Manager
@@ -44,8 +56,11 @@ type Service struct {
 	db  *gorm.DB
 	gid gidservice.Service
 
-	email  *svcemail.Service
-	sms    *svcsms.Service
+	reg   *registry.Registry
+	quota *quota.Checker
+	email *svcemail.Service
+	sms   *svcsms.Service
+	admin *admin.Service
 
 	// startedAt is set once in New; Ping returns it for uptime.
 	startedAt int64
@@ -103,35 +118,34 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 		return nil, err
 	}
 
-	smsCfg, err := cookSMSConfig(cfg.SMS)
-	if err != nil {
-		if cerr := mgr.Stop(); cerr != nil {
-			slog.Error("rollback after sms config cook failure", "error", cerr)
-		}
-		return nil, fmt.Errorf("sms config: %w", err)
-	}
+	// Platform registry: DB-backed snapshot of apps/accounts/signatures/
+	// templates/policies with live provider clients. Vendor accounts are
+	// NO LONGER loaded from YAML — manage them via MessageAdminService
+	// (or the one-shot `migrate --seed-from-config` importer).
+	reg := registry.New(db)
+	quotaChecker := quota.NewChecker(redisClient, "msg:quota")
 
-	emailRegistry, err := provemail.NewAccountRegistry(&cfg.Email.Config)
+	// Snapshot-convergence cron. jobs.Scheduler owns the cron lifecycle.
+	scheduler, err := jobs.New(&jobs.Deps{Config: cfg.Cron})
 	if err != nil {
 		if cerr := mgr.Stop(); cerr != nil {
-			slog.Error("rollback after email registry failure", "error", cerr)
+			slog.Error("rollback after scheduler init failure", "error", cerr)
 		}
-		return nil, fmt.Errorf("email registry: %w", err)
+		return nil, err
 	}
-	smsRegistry, err := provesms.NewAccountRegistry(smsCfg)
-	if err != nil {
+	if err := scheduler.AddFunc(registryRefreshSpec, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := reg.Refresh(ctx); err != nil {
+			slog.Error("registry cron refresh", "error", err)
+		}
+	}); err != nil {
 		if cerr := mgr.Stop(); cerr != nil {
-			slog.Error("rollback after sms registry failure", "error", cerr)
+			slog.Error("rollback after scheduler job registration", "error", cerr)
 		}
-		return nil, fmt.Errorf("sms registry: %w", err)
+		return nil, err
 	}
-	smsRouter, err := provesms.BuildRouter(smsCfg, smsRegistry)
-	if err != nil {
-		if cerr := mgr.Stop(); cerr != nil {
-			slog.Error("rollback after sms router failure", "error", cerr)
-		}
-		return nil, fmt.Errorf("sms router: %w", err)
-	}
+	mgr.Add("jobs-scheduler", scheduler)
 
 	// option override: option.EmailPersistence / SMSPersistence are
 	// module-mode overrides on top of the yaml-loaded defaults. Apply in
@@ -144,13 +158,16 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 	}
 
 	svc := &Service{
-		cfg: cfg,
-		mgr: mgr,
-		db:  db,
-		gid: gid,
-		email: svcemail.New(db, idemChecker, gid, emailRegistry,
+		cfg:   cfg,
+		mgr:   mgr,
+		db:    db,
+		gid:   gid,
+		reg:   reg,
+		quota: quotaChecker,
+		email: svcemail.New(db, idemChecker, gid, reg, quotaChecker,
 			cfg.Email.Persistence, cfg.Email.Attachment),
-		sms:       svcsms.New(db, idemChecker, gid, smsRegistry, smsRouter, cfg.SMS.Persistence),
+		sms:       svcsms.New(db, idemChecker, gid, reg, quotaChecker, cfg.SMS.Persistence),
+		admin:     admin.New(db, reg, gid),
 		startedAt: time.Now().UnixMilli(),
 	}
 
@@ -179,16 +196,46 @@ func (s *Service) Ping(_ context.Context) (*commonv1.Pong, error) {
 	}, nil
 }
 
-// --- facade methods (one per RPC, delegate to subpackage) ---
-
-// SendEmail delegates to the message subpackage.
-func (s *Service) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
-	return s.email.SendEmail(ctx, req)
+// authenticateApp resolves the calling app from x-app-key/x-app-secret
+// metadata against the registry snapshot. Works identically for gRPC
+// (metadata arrives from the wire) and module-mode (caller wrapped ctx via
+// appauth.WithApp / pkg.WithApp).
+func (s *Service) authenticateApp(ctx context.Context) (*models.MessageApp, error) {
+	appKey, appSecret, ok := appauth.Credentials(ctx)
+	if !ok {
+		return nil, xcodes.ErrAppUnauthorized.New("missing app credentials (x-app-key / x-app-secret metadata)")
+	}
+	app := s.reg.Current().App(appKey)
+	if app == nil || app.Disabled {
+		return nil, xcodes.ErrAppUnauthorized.New(fmt.Sprintf("unknown or disabled app %q", appKey))
+	}
+	if app.AppSecret != appSecret {
+		return nil, xcodes.ErrAppUnauthorized.New("invalid app secret")
+	}
+	return app, nil
 }
 
-// SendSMS delegates to the message subpackage.
+// --- facade methods (one per RPC, delegate to subpackage) ---
+
+// SendEmail authenticates the calling app, then delegates to the email
+// subpackage with the app identity (policy lookup, quota, idempotency
+// namespace all hang off it).
+func (s *Service) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
+	app, err := s.authenticateApp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.email.SendEmail(ctx, app, req)
+}
+
+// SendSMS authenticates the calling app, then delegates to the SMS
+// subpackage. See SendEmail.
 func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.SendResponse, error) {
-	return s.sms.SendSMS(ctx, req)
+	app, err := s.authenticateApp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.sms.SendSMS(ctx, app, req)
 }
 
 // GetEmail delegates to the message subpackage.
@@ -209,11 +256,6 @@ func (s *Service) ListEmailsByCursor(ctx context.Context, req *pb.ListEmailsByCu
 // GetEmailStats delegates to the message subpackage.
 func (s *Service) GetEmailStats(ctx context.Context, req *pb.GetEmailStatsRequest) (*pb.EmailStatsResponse, error) {
 	return s.email.GetEmailStats(ctx, req)
-}
-
-// ListEmailSenders delegates to the message subpackage.
-func (s *Service) ListEmailSenders(ctx context.Context, req *pb.ListEmailSendersRequest) (*pb.ListEmailSendersResponse, error) {
-	return s.email.ListEmailSenders(ctx, req)
 }
 
 // GetSMS delegates to the message subpackage.
@@ -241,8 +283,116 @@ func (s *Service) ListSMSRegions(ctx context.Context, req *pb.ListSMSRegionsRequ
 	return s.sms.ListSMSRegions(ctx, req)
 }
 
+// --- admin facades (MessageAdminService; internal-network trusted) ---
 
-// ListSMSSenders delegates to the message subpackage.
-func (s *Service) ListSMSSenders(ctx context.Context, req *pb.ListSMSSendersRequest) (*pb.ListSMSSendersResponse, error) {
-	return s.sms.ListSMSSenders(ctx, req)
+// CreateApp registers a calling app and returns the plaintext app_secret
+// exactly once.
+func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.CreateAppResponse, error) {
+	return s.admin.CreateApp(ctx, req)
+}
+
+// GetApp returns one app by id.
+func (s *Service) GetApp(ctx context.Context, req *pb.GetAppRequest) (*pb.GetAppResponse, error) {
+	return s.admin.GetApp(ctx, req)
+}
+
+// UpdateApp tweaks app metadata.
+func (s *Service) UpdateApp(ctx context.Context, req *pb.UpdateAppRequest) (*pb.UpdateAppResponse, error) {
+	return s.admin.UpdateApp(ctx, req)
+}
+
+// RotateAppSecret invalidates the current secret; new plaintext returned
+// exactly once.
+func (s *Service) RotateAppSecret(ctx context.Context, req *pb.RotateAppSecretRequest) (*pb.RotateAppSecretResponse, error) {
+	return s.admin.RotateAppSecret(ctx, req)
+}
+
+// ListApps returns all apps.
+func (s *Service) ListApps(ctx context.Context, req *pb.ListAppsRequest) (*pb.ListAppsResponse, error) {
+	return s.admin.ListApps(ctx, req)
+}
+
+// DeleteApp soft-deletes an app.
+func (s *Service) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*emptypb.Empty, error) {
+	return s.admin.DeleteApp(ctx, req)
+}
+
+// CreateChannelAccount adds a vendor account to the platform pool.
+func (s *Service) CreateChannelAccount(ctx context.Context, req *pb.CreateChannelAccountRequest) (*pb.CreateChannelAccountResponse, error) {
+	return s.admin.CreateChannelAccount(ctx, req)
+}
+
+// UpdateChannelAccount edits remark/disabled or replaces credentials.
+func (s *Service) UpdateChannelAccount(ctx context.Context, req *pb.UpdateChannelAccountRequest) (*pb.UpdateChannelAccountResponse, error) {
+	return s.admin.UpdateChannelAccount(ctx, req)
+}
+
+// DeleteChannelAccount soft-deletes an account from the pool.
+func (s *Service) DeleteChannelAccount(ctx context.Context, req *pb.DeleteChannelAccountRequest) (*emptypb.Empty, error) {
+	return s.admin.DeleteChannelAccount(ctx, req)
+}
+
+// ListChannelAccounts returns the full pool (secrets masked).
+func (s *Service) ListChannelAccounts(ctx context.Context, req *pb.ListChannelAccountsRequest) (*pb.ListChannelAccountsResponse, error) {
+	return s.admin.ListChannelAccounts(ctx, req)
+}
+
+// CreateSignature registers a signature with its account bindings.
+func (s *Service) CreateSignature(ctx context.Context, req *pb.CreateSignatureRequest) (*pb.CreateSignatureResponse, error) {
+	return s.admin.CreateSignature(ctx, req)
+}
+
+// UpdateSignature replaces remark/disabled/bindings.
+func (s *Service) UpdateSignature(ctx context.Context, req *pb.UpdateSignatureRequest) (*pb.UpdateSignatureResponse, error) {
+	return s.admin.UpdateSignature(ctx, req)
+}
+
+// DeleteSignature soft-deletes a signature.
+func (s *Service) DeleteSignature(ctx context.Context, req *pb.DeleteSignatureRequest) (*emptypb.Empty, error) {
+	return s.admin.DeleteSignature(ctx, req)
+}
+
+// ListSignatures returns all signatures with bindings.
+func (s *Service) ListSignatures(ctx context.Context, req *pb.ListSignaturesRequest) (*pb.ListSignaturesResponse, error) {
+	return s.admin.ListSignatures(ctx, req)
+}
+
+// CreateTemplate registers a template definition.
+func (s *Service) CreateTemplate(ctx context.Context, req *pb.CreateTemplateRequest) (*pb.CreateTemplateResponse, error) {
+	return s.admin.CreateTemplate(ctx, req)
+}
+
+// UpdateTemplate fully replaces a template definition.
+func (s *Service) UpdateTemplate(ctx context.Context, req *pb.UpdateTemplateRequest) (*pb.UpdateTemplateResponse, error) {
+	return s.admin.UpdateTemplate(ctx, req)
+}
+
+// DeleteTemplate soft-deletes a template.
+func (s *Service) DeleteTemplate(ctx context.Context, req *pb.DeleteTemplateRequest) (*emptypb.Empty, error) {
+	return s.admin.DeleteTemplate(ctx, req)
+}
+
+// ListTemplates filters by app (0 = all) and channel (0 = all).
+func (s *Service) ListTemplates(ctx context.Context, req *pb.ListTemplatesRequest) (*pb.ListTemplatesResponse, error) {
+	return s.admin.ListTemplates(ctx, req)
+}
+
+// CreatePolicy binds (app, channel, scene) to a template + route chains.
+func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest) (*pb.CreatePolicyResponse, error) {
+	return s.admin.CreatePolicy(ctx, req)
+}
+
+// UpdatePolicy fully replaces template + route chains.
+func (s *Service) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest) (*pb.UpdatePolicyResponse, error) {
+	return s.admin.UpdatePolicy(ctx, req)
+}
+
+// DeletePolicy removes the binding; sends fail closed from then on.
+func (s *Service) DeletePolicy(ctx context.Context, req *pb.DeletePolicyRequest) (*emptypb.Empty, error) {
+	return s.admin.DeletePolicy(ctx, req)
+}
+
+// ListPolicies filters by app (0 = all) and channel (0 = all).
+func (s *Service) ListPolicies(ctx context.Context, req *pb.ListPoliciesRequest) (*pb.ListPoliciesResponse, error) {
+	return s.admin.ListPolicies(ctx, req)
 }

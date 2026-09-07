@@ -18,10 +18,9 @@ type MessageEmailRecord struct {
 	Scene   int32  `gorm:"not null;default:0;index"`
 	Status  int32  `gorm:"not null;default:0;index"`
 	Target  string `gorm:"size:255;not null;index"`
-	// SenderID identifies the calling business service (e.g. "user-service",
-	// "pay-service"). NOT the end-user/admin id — the caller is responsible
-	// for recording that in its own audit trail.
-	SenderID       string          `gorm:"size:64;column:sender_id;index"`
+	// AppKey identifies the calling app (the authenticated sender identity
+	// resolved from x-app-key credentials at send time).
+	AppKey         string          `gorm:"size:64;column:app_key;index"`
 	Cc             StringSlice     `gorm:"type:json;column:cc"`
 	Bcc            StringSlice     `gorm:"type:json;column:bcc"`
 	Subject        string          `gorm:"type:text"`

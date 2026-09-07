@@ -27,6 +27,7 @@ import (
 // business state and lifecycle. Construction-time injection only.
 type Handler struct {
 	pb.UnimplementedMessageServiceServer
+	pb.UnimplementedMessageAdminServiceServer
 
 	svc *service.Service
 }
@@ -57,21 +58,20 @@ func (h *Handler) Ping(ctx context.Context, _ *emptypb.Empty) (*commonv1.Pong, e
 // use" (prerequisites, side effects, follow-up RPCs) for in-process module
 // callers; for the full contract see message.proto.
 
-// SendEmail sends an email via the configured vendor/account, or the default
-// fallback chain when both are unset. Idempotent on (sender_id,
-// idempotency_key) via Redis when idempotency_key is set: a second request
-// with the same key returns the cached response. Failures are NOT cached —
-// reservation is released so caller can retry the same key.
+// SendEmail sends a policy-driven email: (app, EMAIL, scene) resolves the
+// send policy (template + provider route chain); the app identity comes
+// from x-app-key/x-app-secret metadata. Idempotent on (app_key,
+// idempotency_key) via Redis when idempotency_key is set.
 // Returns: record ID + MessageStatus (SENT = vendor accepted sync;
 // FAILED is returned as ErrMessageSendFailed).
 func (h *Handler) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
 	return h.svc.SendEmail(ctx, req)
 }
 
-// SendSMS sends an SMS via the configured vendor/account, or routes by phone
-// country code when both are unset. CN → domestic path (template-based,
-// sign_name required); other regions → international path (raw content OR
-// template, vendor-dependent). Idempotency semantics mirror SendEmail.
+// SendSMS sends a policy-driven SMS: (app, SMS, scene) resolves the send
+// policy (template + CN/intl route chains); the destination country parsed
+// from the E.164 number picks the chain. Idempotency semantics mirror
+// SendEmail.
 func (h *Handler) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.SendResponse, error) {
 	return h.svc.SendSMS(ctx, req)
 }
@@ -132,14 +132,3 @@ func (h *Handler) ListSMSRegions(ctx context.Context, req *pb.ListSMSRegionsRequ
 	return h.svc.ListSMSRegions(ctx, req)
 }
 
-// ListSMSSenders returns distinct sender_id values across SMS records, for
-// frontend filter dropdowns.
-func (h *Handler) ListSMSSenders(ctx context.Context, req *pb.ListSMSSendersRequest) (*pb.ListSMSSendersResponse, error) {
-	return h.svc.ListSMSSenders(ctx, req)
-}
-
-// ListEmailSenders returns distinct sender_id values across email records,
-// for frontend filter dropdowns.
-func (h *Handler) ListEmailSenders(ctx context.Context, req *pb.ListEmailSendersRequest) (*pb.ListEmailSendersResponse, error) {
-	return h.svc.ListEmailSenders(ctx, req)
-}

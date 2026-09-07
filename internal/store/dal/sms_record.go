@@ -23,7 +23,7 @@ type SmsListFilter struct {
 	Status        pb.MessageStatus
 	RegionCode    string
 	Phone         string
-	SenderID      string
+	AppKey        string
 	StartTime     *time.Time
 	EndTime       *time.Time
 	SortField     pb.SortField
@@ -251,8 +251,8 @@ func applySMSListFilter(q gorm.ChainInterface[models.MessageSMSRecord], f SmsLis
 	if f.Phone != "" {
 		q = q.Where(generated.MessageSMSRecord.Phone.Eq(f.Phone))
 	}
-	if f.SenderID != "" {
-		q = q.Where(generated.MessageSMSRecord.SenderID.Eq(f.SenderID))
+	if f.AppKey != "" {
+		q = q.Where(generated.MessageSMSRecord.AppKey.Eq(f.AppKey))
 	}
 	if f.StartTime != nil {
 		q = q.Where(generated.MessageSMSRecord.CreatedAt.Gte(*f.StartTime))
@@ -299,18 +299,3 @@ func ListSMSRegions(ctx context.Context, tx *gorm.DB) ([]string, error) {
 	return regions, nil
 }
 
-// ListSMSSenderIDs returns all distinct sender_id values, ordered ascending.
-// Used by the frontend to populate SMS list filter dropdowns. Sender sets
-// are low-cardinality so no filter or pagination is exposed.
-func ListSMSSenderIDs(ctx context.Context, tx *gorm.DB) ([]string, error) {
-	q := tx.WithContext(ctx).Model(&models.MessageSMSRecord{}).
-		Distinct("sender_id").
-		Where("sender_id != ''").
-		Order("sender_id ASC")
-
-	var senders []string
-	if err := q.Scan(&senders).Error; err != nil {
-		return nil, xcodes.ErrInternal.Wrap(err)
-	}
-	return senders, nil
-}

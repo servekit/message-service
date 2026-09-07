@@ -72,7 +72,10 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 				grpc.MaxRecvMsgSize(cfg.Server.MaxRecvMsgSizeBytes),
 			},
 		},
-		func(s *grpc.Server) { pb.RegisterMessageServiceServer(s, hdl) },
+		func(s *grpc.Server) {
+			pb.RegisterMessageServiceServer(s, hdl)
+			pb.RegisterMessageAdminServiceServer(s, hdl)
+		},
 		nil, // no HTTP gateway — gRPC-only service
 		grpcx.LoggingInterceptor,
 		grpcx.ErrorInterceptor,

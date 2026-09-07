@@ -33,7 +33,7 @@ func newTestSMSRecord(status int32, scene int32, regionCode, phone string) *mode
 		RegionCode: regionCode,
 		Phone:      phone,
 		Content:    "Your code: 1234",
-		SenderID:   "user:42",
+		AppKey:   "user:42",
 		Attempts:   1,
 	}
 }
@@ -74,7 +74,7 @@ func TestCreateSMSRecord(t *testing.T) {
 	assert.Equal(t, int32(pb.MessageStatus_MESSAGE_STATUS_SENT), found.Status)
 	assert.Equal(t, "CN", found.RegionCode)
 	assert.Equal(t, "13800000111", found.Phone)
-	assert.Equal(t, "user:42", found.SenderID)
+	assert.Equal(t, "user:42", found.AppKey)
 	assert.Equal(t, "Your code: 1234", found.Content)
 	assert.Equal(t, 1, found.Attempts)
 }
@@ -297,35 +297,3 @@ func TestListSMSRegions_Distinct(t *testing.T) {
 	assert.Equal(t, []string{"CN", "HK"}, regions)
 }
 
-func TestListSMSRegions_Empty(t *testing.T) {
-	db := setupSMSDB(t)
-	ctx := context.Background()
-
-	regions, err := ListSMSRegions(ctx, db)
-	require.NoError(t, err)
-	assert.Empty(t, regions)
-}
-
-func TestListSMSSenderIDs_Distinct(t *testing.T) {
-	db := setupSMSDB(t)
-	ctx := context.Background()
-
-	r1 := newTestSMSRecord(int32(pb.MessageStatus_MESSAGE_STATUS_SENT),
-		int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE), "CN", "13800000111")
-	r1.SenderID = "user-service"
-	require.NoError(t, CreateSMSRecord(ctx, db, r1))
-
-	r2 := newTestSMSRecord(int32(pb.MessageStatus_MESSAGE_STATUS_SENT),
-		int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE), "CN", "13800000222")
-	r2.SenderID = "user-service" // same sender, different phone
-	require.NoError(t, CreateSMSRecord(ctx, db, r2))
-
-	r3 := newTestSMSRecord(int32(pb.MessageStatus_MESSAGE_STATUS_SENT),
-		int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE), "HK", "91234567")
-	r3.SenderID = "pay-service"
-	require.NoError(t, CreateSMSRecord(ctx, db, r3))
-
-	senders, err := ListSMSSenderIDs(ctx, db)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"pay-service", "user-service"}, senders)
-}

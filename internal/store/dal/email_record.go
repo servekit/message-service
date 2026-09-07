@@ -30,7 +30,7 @@ type EmailListFilter struct {
 	Scene         pb.EmailScene
 	Status        pb.MessageStatus
 	Target        string
-	SenderID      string
+	AppKey       string
 	StartTime     *time.Time
 	EndTime       *time.Time
 	SortField     pb.SortField
@@ -268,8 +268,8 @@ func applyEmailListFilter(q gorm.ChainInterface[models.MessageEmailRecord], f Em
 	if f.Target != "" {
 		q = q.Where(generated.MessageEmailRecord.Target.Eq(f.Target))
 	}
-	if f.SenderID != "" {
-		q = q.Where(generated.MessageEmailRecord.SenderID.Eq(f.SenderID))
+	if f.AppKey != "" {
+		q = q.Where(generated.MessageEmailRecord.AppKey.Eq(f.AppKey))
 	}
 	if f.StartTime != nil {
 		q = q.Where(generated.MessageEmailRecord.CreatedAt.Gte(*f.StartTime))
@@ -313,18 +313,3 @@ func applyEmailCursor(q gorm.ChainInterface[models.MessageEmailRecord], f EmailL
 	return q.Where("created_at < ? OR (created_at = ? AND id < ?)", afterCreatedAt, afterCreatedAt, afterID)
 }
 
-// ListEmailSenderIDs returns all distinct sender_id values, ordered ascending.
-// Used by the frontend to populate email list filter dropdowns. Sender sets
-// are low-cardinality so no filter or pagination is exposed.
-func ListEmailSenderIDs(ctx context.Context, tx *gorm.DB) ([]string, error) {
-	q := tx.WithContext(ctx).Model(&models.MessageEmailRecord{}).
-		Distinct("sender_id").
-		Where("sender_id != ''").
-		Order("sender_id ASC")
-
-	var senders []string
-	if err := q.Scan(&senders).Error; err != nil {
-		return nil, xcodes.ErrInternal.Wrap(err)
-	}
-	return senders, nil
-}
