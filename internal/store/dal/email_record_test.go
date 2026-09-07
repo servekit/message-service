@@ -33,7 +33,7 @@ func newTestEmailRecord(status int32, scene int32, target string) *models.Messag
 		Target:   target,
 		Subject:  "Test Subject",
 		Content:  "Test content body",
-		AppKey: "user:42",
+		AppKey:   "user:42",
 		Attempts: 1,
 	}
 }
@@ -329,4 +329,3 @@ func TestListEmailsByCursor_ASC(t *testing.T) {
 	assert.Equal(t, int64(1), records[0].ID)
 	assert.Equal(t, int64(3), records[2].ID)
 }
-

@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"time"
 
 	pb "github.com/servekit/api/gen/go/messaging/v1"
 	gidservice "github.com/servekit/gid-service/pkg"
@@ -57,8 +58,22 @@ func (s *Service) nextID(ctx context.Context) (int64, error) {
 // CreateApp registers a calling app and returns the plaintext app_secret
 // exactly once.
 func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.CreateAppResponse, error) {
-	if _, err := dal.GetAppByKey(ctx, s.db, req.GetAppKey()); err == nil {
-		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("app_key %q already exists", req.GetAppKey()))
+	appKey := req.GetAppKey()
+	if appKey == "" {
+		// Server-generated identity: "app_" + 8 random base36 chars.
+		// Collision odds are negligible; retry defensively anyway.
+		for i := 0; i < 3; i++ {
+			candidate := mintAppKey()
+			if _, err := dal.GetAppByKey(ctx, s.db, candidate); err != nil {
+				appKey = candidate
+				break
+			}
+		}
+		if appKey == "" {
+			return nil, xcodes.ErrInternal.New("generate app_key: exhausted retries")
+		}
+	} else if _, err := dal.GetAppByKey(ctx, s.db, appKey); err == nil {
+		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("app_key %q already exists", appKey))
 	}
 	secret, err := mintSecret()
 	if err != nil {
@@ -70,7 +85,7 @@ func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.
 	}
 	app := &models.MessageApp{
 		ID:              id,
-		AppKey:          req.GetAppKey(),
+		AppKey:          appKey,
 		AppSecret:       secret,
 		Name:            req.GetName(),
 		SMSDailyLimit:   req.GetSmsDailyLimit(),
@@ -765,6 +780,20 @@ func paramSpecsToProto(specs []models.TemplateParamSpec) []*pb.TemplateParamSpec
 		out[i] = &pb.TemplateParamSpec{Name: s.Name, Required: s.Required, Description: s.Description}
 	}
 	return out
+}
+
+// mintAppKey generates a server-side app identity: "app_" + 8 base36 chars.
+func mintAppKey() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "app_" + fmt.Sprintf("%08x", time.Now().UnixNano())
+	}
+	const base36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+	out := make([]byte, 8)
+	for i, b := range buf {
+		out[i] = base36[int(b)%36]
+	}
+	return "app_" + string(out)
 }
 
 // mintSecret generates the app secret: "msg_" + 32 bytes base64url.

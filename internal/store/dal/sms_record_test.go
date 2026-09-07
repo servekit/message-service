@@ -33,7 +33,7 @@ func newTestSMSRecord(status int32, scene int32, regionCode, phone string) *mode
 		RegionCode: regionCode,
 		Phone:      phone,
 		Content:    "Your code: 1234",
-		AppKey:   "user:42",
+		AppKey:     "user:42",
 		Attempts:   1,
 	}
 }
@@ -296,4 +296,3 @@ func TestListSMSRegions_Distinct(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"CN", "HK"}, regions)
 }
-

@@ -211,16 +211,25 @@ func (s *Service) GetEmailStats(ctx context.Context, req *pb.GetEmailStatsReques
 
 // persistEmailRecordWithTimeout persists with an independent context so
 // request cancellation does not lose the record.
-func (s *Service) persistEmailRecordWithTimeout(id int64, app *models.MessageApp, req *pb.SendEmailRequest, subject, textBody, htmlBody string, templateID int64, result *provemail.SendResult) {
+func (s *Service) persistEmailRecordWithTimeout(id int64, app *models.MessageApp, req *pb.SendEmailRequest, subject, textBody, htmlBody string, templateID int64, freeForm bool, result *provemail.SendResult) {
 	persistCtx, cancel := context.WithTimeout(context.Background(), utils.PersistTimeout)
 	defer cancel()
-	s.persistEmailRecord(persistCtx, id, app, req, subject, textBody, htmlBody, templateID, result)
+	s.persistEmailRecord(persistCtx, id, app, req, subject, textBody, htmlBody, templateIDLabel(templateID, freeForm), result)
+}
+
+// templateIDLabel mirrors templateLabel in send.go: empty in free-form
+// mode (request-supplied content), the platform template id otherwise.
+func templateIDLabel(templateID int64, freeForm bool) string {
+	if freeForm {
+		return ""
+	}
+	return strconv.FormatInt(templateID, 10)
 }
 
 // persistEmailRecord writes the email record (and attachment metadata rows)
 // to the DB. Synchronous but error-logged — send already succeeded, so a DB
 // failure must not propagate to the caller.
-func (s *Service) persistEmailRecord(ctx context.Context, id int64, app *models.MessageApp, req *pb.SendEmailRequest, subject, textBody, htmlBody string, templateID int64, result *provemail.SendResult) {
+func (s *Service) persistEmailRecord(ctx context.Context, id int64, app *models.MessageApp, req *pb.SendEmailRequest, subject, textBody, htmlBody string, templateIDLabel string, result *provemail.SendResult) {
 	// DB stores bare emails only (no display_name) — query filtering targets
 	// the email address, not the human-readable name. Display name lives in
 	// the request, not the persisted record.
@@ -243,7 +252,7 @@ func (s *Service) persistEmailRecord(ctx context.Context, id int64, app *models.
 		Content:        textBody,
 		HTMLBody:       htmlBody,
 		ReplyTo:        bareEmailFromAddr(req.GetReplyTo()),
-		TemplateID:     strconv.FormatInt(templateID, 10),
+		TemplateID:     templateIDLabel,
 		TemplateParams: models.MapStringString(req.GetTemplateParams()),
 		Attempts:       result.Attempts,
 	}

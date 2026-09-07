@@ -298,4 +298,3 @@ func ListSMSRegions(ctx context.Context, tx *gorm.DB) ([]string, error) {
 	}
 	return regions, nil
 }
-

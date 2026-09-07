@@ -30,7 +30,7 @@ type EmailListFilter struct {
 	Scene         pb.EmailScene
 	Status        pb.MessageStatus
 	Target        string
-	AppKey       string
+	AppKey        string
 	StartTime     *time.Time
 	EndTime       *time.Time
 	SortField     pb.SortField
@@ -312,4 +312,3 @@ func applyEmailCursor(q gorm.ChainInterface[models.MessageEmailRecord], f EmailL
 	}
 	return q.Where("created_at < ? OR (created_at = ? AND id < ?)", afterCreatedAt, afterCreatedAt, afterID)
 }
-

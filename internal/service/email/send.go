@@ -73,7 +73,10 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 		}
 	}
 
-	// Resolve template + validate params before any provider call.
+	// Resolve the policy template. In free-form mode (request subject set)
+	// the template only supplies fallback content — the request fields win;
+	// in template mode it is the content source and its required params
+	// are enforced.
 	template := snap.Template(policy.TemplateID)
 	if template == nil || template.Disabled {
 		release("template missing")
@@ -83,23 +86,34 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 		release("template channel mismatch")
 		return nil, xcodes.ErrInvalidTemplateContent.New(fmt.Sprintf("template %d is not an email template", template.ID))
 	}
-	specs, err := send.ParseParamSpecs(template.Params)
-	if err != nil {
-		release("template params corrupt")
-		return nil, xcodes.ErrInvalidTemplateContent.Wrap(err)
+	freeForm := req.GetSubject() != ""
+	var baseSubject, baseText, baseHTML string
+	if freeForm {
+		baseSubject = req.GetSubject()
+		baseText = req.GetBody()
+		baseHTML = req.GetHtmlBody()
+	} else {
+		specs, err := send.ParseParamSpecs(template.Params)
+		if err != nil {
+			release("template params corrupt")
+			return nil, xcodes.ErrInvalidTemplateContent.Wrap(err)
+		}
+		if err := send.ValidateParams(specs, req.GetTemplateParams()); err != nil {
+			release("template param missing")
+			return nil, err
+		}
+		content, err := send.DecodeEmailContent(template.Content)
+		if err != nil {
+			release("template content corrupt")
+			return nil, err
+		}
+		baseSubject, baseText, baseHTML = content.Subject, content.TextBody, content.HTMLBody
 	}
-	if err := send.ValidateParams(specs, req.GetTemplateParams()); err != nil {
-		release("template param missing")
-		return nil, err
-	}
-	content, err := send.DecodeEmailContent(template.Content)
-	if err != nil {
-		release("template content corrupt")
-		return nil, err
-	}
-	subject := send.Render(content.Subject, req.GetTemplateParams())
-	textBody := send.Render(content.TextBody, req.GetTemplateParams())
-	htmlBody := send.Render(content.HTMLBody, req.GetTemplateParams())
+	// {{param}} rendering applies to BOTH sources — free-form content with
+	// placeholders renders them with template_params too (missing → empty).
+	subject := send.Render(baseSubject, req.GetTemplateParams())
+	textBody := send.Render(baseText, req.GetTemplateParams())
+	htmlBody := send.Render(baseHTML, req.GetTemplateParams())
 
 	// Provider chain from the policy routes (weighted start, list order
 	// fallback). Accounts missing from the snapshot are skipped.
@@ -146,7 +160,7 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 		ReplyTo:  pbToAddr(req.GetReplyTo()),
 		// Template carries the platform template ID as an audit label (SMTP
 		// ignores it — rendering already happened platform-side).
-		Template:       strconv.FormatInt(template.ID, 10),
+		Template:       templateLabel(template.ID, freeForm),
 		TemplateParams: req.GetTemplateParams(),
 		Attachments:    mimeAtts,
 	}
@@ -164,7 +178,7 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 	// context so request cancellation does not lose the record. Skipped
 	// when persistence disabled — caller opted out of DB writes.
 	if s.persistence {
-		s.persistEmailRecordWithTimeout(id, app, req, subject, textBody, htmlBody, template.ID, result)
+		s.persistEmailRecordWithTimeout(id, app, req, subject, textBody, htmlBody, template.ID, freeForm, result)
 	}
 
 	// Post-send failure: Release so the caller can retry — failures are not
@@ -229,6 +243,9 @@ func validateSendEmailRequest(req *pb.SendEmailRequest) error {
 	if len(req.GetTo()) == 0 {
 		return fmt.Errorf("to is required")
 	}
+	if req.GetSubject() != "" && req.GetBody() == "" {
+		return fmt.Errorf("free-form mode requires body when subject is set")
+	}
 	if len(req.GetIdempotencyKey()) > utils.MaxIdempotencyKeyLen {
 		return fmt.Errorf("idempotency_key too long (max %d)", utils.MaxIdempotencyKeyLen)
 	}
@@ -236,4 +253,14 @@ func validateSendEmailRequest(req *pb.SendEmailRequest) error {
 		return err
 	}
 	return nil
+}
+
+// templateLabel renders the audit label for the provider message: the
+// template id in template mode, empty in free-form mode (no template
+// content used).
+func templateLabel(templateID int64, freeForm bool) string {
+	if freeForm {
+		return ""
+	}
+	return strconv.FormatInt(templateID, 10)
 }

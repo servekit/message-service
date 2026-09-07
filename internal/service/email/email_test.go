@@ -300,3 +300,42 @@ func TestAccountConfigJSONRoundTrip(t *testing.T) {
 }
 
 var _ = xcodes.ErrPolicyNotFound // keep import anchored
+
+func TestSendEmailFreeFormContentWithParams(t *testing.T) {
+	ok := &mockEmailProvider{name: "p"}
+	fx := newFixture(t, ok)
+
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, &pb.SendEmailRequest{
+		To:    []*pb.EmailAddress{{Email: "to@example.com"}},
+		Scene: pb.EmailScene_EMAIL_SCENE_LOGIN_CODE,
+		// free-form content wins over the template; {{param}} still rendered
+		Subject:        "Hi {{nickname}}",
+		Body:           "custom body for {{nickname}}, code {{code}}",
+		TemplateParams: map[string]string{"nickname": "Ada", "code": "424242"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, ok.last)
+	assert.Equal(t, "Hi Ada", ok.last.Subject)
+	assert.Equal(t, "custom body for Ada, code 424242", ok.last.Body)
+	assert.Empty(t, ok.last.Template, "free-form sends carry no template label")
+
+	// record persisted with the free-form content and empty template id
+	records, err := dal.ListEmailRecords(context.Background(), fx.db, dal.EmailListFilter{
+		AppKey: fx.app.AppKey,
+	}, dbx.PageParams{Page: 1, PageSize: 10, Count: true})
+	require.NoError(t, err)
+	require.Len(t, records.List, 1)
+	assert.Equal(t, "Hi Ada", records.List[0].Subject)
+	assert.Empty(t, records.List[0].TemplateID)
+}
+
+func TestSendEmailFreeFormRequiresBody(t *testing.T) {
+	fx := newFixture(t, &mockEmailProvider{name: "p"})
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, &pb.SendEmailRequest{
+		To:      []*pb.EmailAddress{{Email: "to@example.com"}},
+		Scene:   pb.EmailScene_EMAIL_SCENE_LOGIN_CODE,
+		Subject: "subject without body",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "BAD_REQUEST")
+}

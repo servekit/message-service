@@ -30,11 +30,11 @@ import (
 // --- mocks ---
 
 type mockSMSProvider struct {
-	vendor  pb.SmsVendor
-	name    string
-	err     error
-	calls   int
-	last    *provesms.Message
+	vendor   pb.SmsVendor
+	name     string
+	err      error
+	calls    int
+	last     *provesms.Message
 	lastIntl *provesms.InternationalMessage
 }
 
@@ -137,8 +137,8 @@ func newSMSFixture(t *testing.T) *smsFixture {
 	require.NoError(t, err)
 	policy := &models.MessagePolicy{
 		ID: 3101, AppID: app.ID,
-		Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
-		Scene:   int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE),
+		Channel:    int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
+		Scene:      int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE),
 		TemplateID: template.ID,
 		Routes:     routes,
 		IntlRoutes: routes,
@@ -261,14 +261,14 @@ func TestSendSMSMissingParam(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TEMPLATE_PARAM_MISSING")
-	assert.Zero(t, fx.aliyun.calls + fx.tencent.calls)
+	assert.Zero(t, fx.aliyun.calls+fx.tencent.calls)
 }
 
 func TestSendSMSInvalidPhone(t *testing.T) {
 	fx := newSMSFixture(t)
 	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
-		To: "+86101234567", // Beijing landline — not SMS-capable
-		Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		To:             "+86101234567", // Beijing landline — not SMS-capable
+		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "1"},
 	})
 	require.Error(t, err)
