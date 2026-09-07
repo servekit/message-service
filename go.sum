@@ -607,12 +607,12 @@ github.com/ryanuber/columnize v0.0.0-20160712163229-9b3edd62028f/go.mod h1:sm1tb
 github.com/sagikazarmark/locafero v0.11.0 h1:1iurJgmM9G3PA/I+wWYIOw/5SyBtxapeHDcg+AAIFXc=
 github.com/sagikazarmark/locafero v0.11.0/go.mod h1:nVIGvgyzw595SUSUE6tvCp3YYTeHs15MvlmU87WwIik=
 github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529/go.mod h1:DxrIzT+xaE7yg65j358z/aeFdxmN0P9QXhEzd20vsDc=
-github.com/servekit/api/gen/go v0.0.0-20260906161859-149a5fb4e9e4 h1:xrBYN+QA5DuULJNgEJIDdyT5eb2zbw3q6uRCCBUsitw=
-github.com/servekit/api/gen/go v0.0.0-20260906161859-149a5fb4e9e4/go.mod h1:eRewFd7DCi0TVeTc/7XgwS6IIKB841UltJ32J5NYcD4=
+github.com/servekit/api/gen/go v0.0.0-20260907134616-c735fd847cc4 h1:Oqpy1ejm3UzfvhVVzTo+vU/0uJUSBko0ugdDMrWZrQ4=
+github.com/servekit/api/gen/go v0.0.0-20260907134616-c735fd847cc4/go.mod h1:eRewFd7DCi0TVeTc/7XgwS6IIKB841UltJ32J5NYcD4=
 github.com/servekit/gid-service v0.0.0-20260904101455-50bc5a3f8aa5 h1:FHL1WPPZYcaXLOzP6WSuYF4KGpvmvCSUD4e2MLmqPvw=
 github.com/servekit/gid-service v0.0.0-20260904101455-50bc5a3f8aa5/go.mod h1:whuaztXOcK1gldcC/a4R86dzWWQ3teDVOoEW4kws+zE=
-github.com/servekit/go-common v0.0.0-20260904101207-39630b2b22cc h1:jefXIjZOQrXHjeUwKU03k1hE5I4YRE+THFVbYzz+Yok=
-github.com/servekit/go-common v0.0.0-20260904101207-39630b2b22cc/go.mod h1:z6VodepIxCJoDyV5enWfUSW8yvkM+EFsftU5eXoPYBc=
+github.com/servekit/go-common v0.0.0-20260907134535-5a601f9f7499 h1:TO15kxZip292urfzWN6iWH7qUP0ijTEZMSNK5kgwu44=
+github.com/servekit/go-common v0.0.0-20260907134535-5a601f9f7499/go.mod h1:KV9EE3qHrxJOhF0t7R8EVyeuEkkk+6vjclkIxPDZcks=
 github.com/shirou/gopsutil/v4 v4.26.5 h1:RPcBXkpz7kOj9PqGFQOlBPZHsyaPvPVQc098y9RmCNM=
 github.com/shirou/gopsutil/v4 v4.26.5/go.mod h1:LZ6ewCSkBqUpvSOf+LsTGnRinC6iaNUNMGBtDkJBaLQ=
 github.com/shopspring/decimal v1.4.0/go.mod h1:gawqmDU56v4yIKSwfBSFip1HdCCXN8/+DMd9qYNcwME=

@@ -65,10 +65,12 @@ func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.Send
 		return nil, xcodes.ErrInternal.Wrap(err)
 	}
 
-	// Parse + format to E.164 so router/providers receive an unambiguous
-	// input. validateSendSMSRequest already verified parse succeeds and
-	// region matches; the error here is theoretical defense-in-depth.
-	num, err := phonenumbers.Parse(req.GetPhone(), req.GetRegionCode())
+	// Parse the E.164 destination so router/providers receive an unambiguous
+	// input and the destination country (which decides the domestic vs
+	// international path) comes from the number itself. validateSendSMSRequest
+	// already verified the parse succeeds; the error here is theoretical
+	// defense-in-depth.
+	num, err := phonenumbers.Parse(req.GetTo(), "")
 	if err != nil {
 		if idemKey != "" {
 			releaseErr := s.idem.Release(context.Background(), "sms", req.GetSenderId(), idemKey)
@@ -76,7 +78,7 @@ func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.Send
 				slog.Error("idempotency release after phone parse failure", "key", idemKey, "error", releaseErr)
 			}
 		}
-		return nil, xcodes.ErrBadRequest.Wrapf(err, "parse phone %q", req.GetPhone())
+		return nil, xcodes.ErrBadRequest.Wrapf(err, "parse phone %q", req.GetTo())
 	}
 	e164 := phonenumbers.Format(num, phonenumbers.E164)
 
@@ -84,7 +86,7 @@ func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.Send
 	// anything else → international (raw content). The two paths are strictly
 	// separated at the AccountProvider interface; the service picks one based
 	// on phone region and never crosses over.
-	regionCode := req.GetRegionCode()
+	regionCode := phonenumbers.GetRegionCodeForNumber(num)
 	var result *provesms.SendResult
 	var sendErr error
 	if regionCode == "CN" {
@@ -114,7 +116,7 @@ func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.Send
 						slog.Error("idempotency release after router missing", "key", idemKey, "error", releaseErr)
 					}
 				}
-				return nil, xcodes.ErrBadRequest.New("sms routes not configured; specify vendor and account explicitly")
+				return nil, xcodes.ErrSMSRoutesNotConfigured.New()
 			}
 			result, sendErr = s.smsRouter.Send(ctx, domesticMsg)
 		}
@@ -151,7 +153,7 @@ func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.Send
 						slog.Error("idempotency release after router missing", "key", idemKey, "error", releaseErr)
 					}
 				}
-				return nil, xcodes.ErrBadRequest.New("sms routes not configured; specify vendor and account explicitly")
+				return nil, xcodes.ErrSMSRoutesNotConfigured.New()
 			}
 			result, sendErr = s.smsRouter.SendInternational(ctx, intlMsg)
 		}
@@ -438,13 +440,15 @@ func (s *Service) ListSMSSenders(ctx context.Context, _ *pb.ListSMSSendersReques
 // --- record persistence (synchronous, error-logged) ---
 
 func (s *Service) persistSMSRecord(ctx context.Context, id int64, req *pb.SendSMSRequest, result *provesms.SendResult) {
+	// Region metadata comes from the E.164 destination itself.
+	num, _ := phonenumbers.Parse(req.GetTo(), "")
 	record := &models.MessageSMSRecord{
 		ID:             id,
 		Vendor:         int32(result.Vendor),
 		Account:        result.Account,
 		Scene:          int32(req.GetScene()),
-		RegionCode:     req.GetRegionCode(),
-		Phone:          req.GetPhone(),
+		RegionCode:     phonenumbers.GetRegionCodeForNumber(num),
+		Phone:          req.GetTo(),
 		SenderID:       req.GetSenderId(),
 		Content:        req.GetContent(),
 		TemplateID:     req.GetTemplateId(),
@@ -547,18 +551,35 @@ func validateSendSMSRequest(req *pb.SendSMSRequest) error {
 	}
 
 	// Cheap syntactic checks before the more expensive phonenumbers.Parse.
-	rc := req.GetRegionCode()
-	if !regionCodePattern.MatchString(rc) {
-		return fmt.Errorf("region_code must be 2 uppercase letters (ISO 3166-1 alpha-2), got %q", rc)
+	to := req.GetTo()
+	if to == "" {
+		return fmt.Errorf("to is required")
 	}
-	phone := req.GetPhone()
-	if phone == "" {
-		return fmt.Errorf("phone is required")
+	if to[0] != '+' {
+		return fmt.Errorf("to must be E.164 international format (\"+<countrycode><national>\", e.g. \"+8613800138000\")")
 	}
-	// Local-format phone must not carry an international prefix; the caller
-	// supplies region_code instead.
-	if phone[0] == '+' {
-		return fmt.Errorf("phone must not start with '+' — provide local number only; region_code disambiguates the country")
+
+	// The destination country decides the vendor path — derived from the
+	// E.164 number itself, never supplied separately.
+	num, err := phonenumbers.Parse(to, "")
+	if err != nil {
+		return fmt.Errorf("parse phone %q: %w", to, err)
+	}
+	if !phonenumbers.IsValidNumber(num) {
+		return fmt.Errorf("phone %q is not a valid number", to)
+	}
+	// Country-specific strictness comes from libphonenumber's per-region
+	// metadata (IsValidNumber already rejects numbers that do not match the
+	// destination country's numbering plan, e.g. a Chinese "123..." mobile
+	// prefix). The type gate below is the second half: SMS goes to MOBILE
+	// numbers, so a valid FIXED_LINE (e.g. a Beijing landline +86-10-...) is
+	// rejected here instead of failing at the vendor.
+	if nt := phonenumbers.GetNumberType(num); !smsCapableNumberType(nt) {
+		return fmt.Errorf("phone %q is a %s number; SMS requires a mobile/SMS-capable number", to, numberTypeName(nt))
+	}
+	rc := phonenumbers.GetRegionCodeForNumber(num)
+	if rc == "" || rc == "ZZ" {
+		return fmt.Errorf("phone %q has no resolvable destination country", to)
 	}
 
 	// Path-specific field requirements. CN is template-only (regulatory);
@@ -579,16 +600,56 @@ func validateSendSMSRequest(req *pb.SendSMSRequest) error {
 			return fmt.Errorf("international (non-CN) SMS requires exactly one of content or template_id")
 		}
 	}
-
-	num, err := phonenumbers.Parse(phone, rc)
-	if err != nil {
-		return fmt.Errorf("parse phone %q with region %q: %w", phone, rc, err)
-	}
-	if !phonenumbers.IsValidNumber(num) {
-		return fmt.Errorf("phone %q is not a valid number in region %q", phone, rc)
-	}
-	if got := phonenumbers.GetRegionCodeForNumber(num); got != rc {
-		return fmt.Errorf("phone %q parses as region %q, not %q", phone, got, rc)
-	}
 	return nil
+}
+
+// smsCapableNumberType reports whether a number type can receive SMS.
+// MOBILE is the obvious yes; FIXED_LINE_OR_MOBILE covers regions whose
+// metadata cannot distinguish (US NANP); VOIP numbers (Google Voice and
+// similar) receive SMS in practice; UNKNOWN is admitted because the number
+// already passed IsValidNumber — the region's metadata simply lacks type
+// patterns. Everything else (FIXED_LINE, TOLL_FREE, PREMIUM_RATE, PAGER,
+// UAN, VOICEMAIL, ...) cannot receive SMS and is rejected before any
+// vendor call.
+func smsCapableNumberType(nt phonenumbers.PhoneNumberType) bool {
+	switch nt {
+	case phonenumbers.MOBILE,
+		phonenumbers.FIXED_LINE_OR_MOBILE,
+		phonenumbers.VOIP,
+		phonenumbers.PERSONAL_NUMBER,
+		phonenumbers.UNKNOWN:
+		return true
+	default:
+		return false
+	}
+}
+
+// numberTypeName renders a PhoneNumberType for error messages.
+func numberTypeName(nt phonenumbers.PhoneNumberType) string {
+	switch nt {
+	case phonenumbers.FIXED_LINE:
+		return "fixed-line"
+	case phonenumbers.MOBILE:
+		return "mobile"
+	case phonenumbers.FIXED_LINE_OR_MOBILE:
+		return "fixed-line-or-mobile"
+	case phonenumbers.TOLL_FREE:
+		return "toll-free"
+	case phonenumbers.PREMIUM_RATE:
+		return "premium-rate"
+	case phonenumbers.SHARED_COST:
+		return "shared-cost"
+	case phonenumbers.VOIP:
+		return "voip"
+	case phonenumbers.PERSONAL_NUMBER:
+		return "personal-number"
+	case phonenumbers.PAGER:
+		return "pager"
+	case phonenumbers.UAN:
+		return "uan"
+	case phonenumbers.VOICEMAIL:
+		return "voicemail"
+	default:
+		return "unknown"
+	}
 }

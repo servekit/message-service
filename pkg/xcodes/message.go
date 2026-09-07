@@ -26,6 +26,17 @@ var ErrSMSNotFound = xerr.New("SMS_NOT_FOUND", xerr.CategoryNotFound, 404, "sms 
 // request after exhausting fallback chain.
 var ErrMessageSendFailed = xerr.New("MESSAGE_SEND_FAILED", xerr.CategoryInternal, 500, "message send failed")
 
+// ErrSMSRoutesNotConfigured indicates the deployment has no SMS routing
+// configured (no default routes and the caller did not pick vendor+account).
+// This is a server-side configuration gap, not a caller error — hence 503,
+// letting callers back off or alert instead of "fixing" their request.
+var ErrSMSRoutesNotConfigured = xerr.New(
+	"SMS_ROUTES_NOT_CONFIGURED",
+	xerr.CategoryServiceUnavailable,
+	503,
+	"sms routes not configured; specify vendor and account explicitly",
+)
+
 // ErrPersistenceDisabled indicates the caller invoked a query method on a
 // channel whose persistence has been disabled in config. The send path still
 // works (vendor call + Redis idempotency, which is always on regardless of

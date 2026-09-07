@@ -159,8 +159,7 @@ func TestSendSMS_Success(t *testing.T) {
 	})
 
 	resp, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -177,7 +176,7 @@ func TestSendSMS_Success(t *testing.T) {
 	assert.Equal(t, pb.SmsScene_SMS_SCENE_LOGIN_CODE, record.Scene)
 	assert.Equal(t, "user:42", record.SenderId)
 	assert.Equal(t, "CN", record.RegionCode)
-	assert.Equal(t, "13800000111", record.Phone)
+	assert.Equal(t, "+8613800000111", record.Phone)
 
 	// Verify vendor is correctly mapped (regression: previously always 0
 	// because AccountProvider.Vendor uses enum.String() but the old switch
@@ -194,8 +193,7 @@ func TestSendSMS_ProviderError_PersistsFailedRecord(t *testing.T) {
 	})
 
 	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -225,8 +223,7 @@ func TestListSMS_ByScene(t *testing.T) {
 		pb.SmsScene_SMS_SCENE_REGISTER,
 	} {
 		_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-			RegionCode:     "CN",
-			Phone:          "13800000111",
+			To:             "+8613800000111",
 			TemplateId:     "SMS_123",
 			TemplateParams: map[string]string{"code": "1234"},
 			SignName:       "sign",
@@ -249,8 +246,7 @@ func TestSendSMS_Idempotent_NoKey_DoesNotDedupe(t *testing.T) {
 	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -277,8 +273,7 @@ func TestSendSMS_Idempotent_FailureNotCached_RetriesProvider(t *testing.T) {
 	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -307,8 +302,7 @@ func TestSendSMS_PersistsEvenWhenContextCancelled(t *testing.T) {
 	cancel() // pre-cancel before send
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -348,8 +342,7 @@ func TestSendSMS_RouterPathPersistsEvenWhenContextCancelled(t *testing.T) {
 	cancel()
 
 	_, err := svc.SendSMS(ctx, &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -372,8 +365,7 @@ func TestSendSMS_RejectsMissingScene(t *testing.T) {
 	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
 
 	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -389,8 +381,7 @@ func TestSendSMS_RejectsVendorWithoutAccount(t *testing.T) {
 	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
 
 	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -408,8 +399,7 @@ func TestSendSMS_FailureIncludesVendorContext(t *testing.T) {
 	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
 
 	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -432,8 +422,7 @@ func TestListSMS_ASC_WithTotalPages(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-			RegionCode:     "CN",
-			Phone:          fmt.Sprintf("1380000%04d", i),
+			To:             fmt.Sprintf("+861380000%04d", i),
 			TemplateId:     "SMS_123",
 			TemplateParams: map[string]string{"code": "1234"},
 			SignName:       "sign",
@@ -463,8 +452,7 @@ func TestListSMSByCursor_TwoPageFlow(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-			RegionCode:     "CN",
-			Phone:          fmt.Sprintf("1380000%04d", i),
+			To:             fmt.Sprintf("+861380000%04d", i),
 			TemplateId:     "SMS_123",
 			TemplateParams: map[string]string{"code": "1234"},
 			SignName:       "sign",
@@ -518,8 +506,7 @@ func TestSendSMS_PersistenceDisabled_SkipsDB(t *testing.T) {
 	})
 
 	resp, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -542,8 +529,7 @@ func TestSendSMS_PersistenceDisabled_IdempotencyStillWorks(t *testing.T) {
 	svc := newTestSMSServiceNoPersist(t, []sms.AccountProvider{provider})
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -602,8 +588,7 @@ func TestSendSMS_Idempotent_SecondCallReturnsCached(t *testing.T) {
 	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -633,8 +618,7 @@ func TestSendSMS_IdempotencyConflict_OnInFlight(t *testing.T) {
 	require.NoError(t, svc.idem.Complete(context.Background(), "sms", "user:42", "in-flight", []byte("PENDING")))
 
 	_, err := svc.SendSMS(context.Background(), &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -651,8 +635,7 @@ func TestSendSMS_Failure_NotCached_ReleasesReservation(t *testing.T) {
 	svc := newTestSMSServiceWithRouter(t, []sms.AccountProvider{provider})
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -691,8 +674,7 @@ func TestSendSMS_IdempotencyReleased_OnGIDFailure(t *testing.T) {
 		true)
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -720,8 +702,7 @@ func TestSendSMS_IdempotencyReleased_OnSenderForFailure(t *testing.T) {
 	})
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -755,8 +736,7 @@ func TestSendSMS_IdempotencyReleased_OnRouterNil(t *testing.T) {
 		true)
 
 	req := &pb.SendSMSRequest{
-		RegionCode:     "CN",
-		Phone:          "13800000111",
+		To:             "+8613800000111",
 		TemplateId:     "SMS_123",
 		TemplateParams: map[string]string{"code": "1234"},
 		SignName:       "sign",
@@ -778,8 +758,7 @@ func TestSendSMS_IdempotencyReleased_OnRouterNil(t *testing.T) {
 
 func TestValidateSendSMSRequest_VendorWithoutAccount(t *testing.T) {
 	req := &pb.SendSMSRequest{
-		RegionCode: "CN",
-		Phone:      "13800000111",
+		To:         "+8613800000111",
 		TemplateId: "SMS_123",
 		SignName:   "sign",
 		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
@@ -791,42 +770,26 @@ func TestValidateSendSMSRequest_VendorWithoutAccount(t *testing.T) {
 	assert.Contains(t, err.Error(), "vendor and account")
 }
 
-func TestValidateSendSMSRequest_RegionCodeInvalidFormat(t *testing.T) {
-	cases := []string{"", "cn", "CHN", "C", "ABC", "12"}
-	for _, rc := range cases {
-		t.Run(rc, func(t *testing.T) {
+func TestValidateSendSMSRequest_ToInvalidFormat(t *testing.T) {
+	// to must be E.164: leading +, 9-15 digits.
+	cases := []string{"", "13800000111", "8613800001111", "not-a-phone", "+12"}
+	for _, to := range cases {
+		t.Run(to, func(t *testing.T) {
 			req := &pb.SendSMSRequest{
-				RegionCode: rc,
-				Phone:      "13800000111",
-				Content:    "Your code is 1234",
-				Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-				SenderId:   "user-service",
+				To:       to,
+				Content:  "Your code is 1234",
+				Scene:    pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+				SenderId: "user-service",
 			}
 			err := validateSendSMSRequest(req)
 			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "region_code")
 		})
 	}
 }
 
-func TestValidateSendSMSRequest_PhoneStartsWithPlus(t *testing.T) {
-	req := &pb.SendSMSRequest{
-		RegionCode: "CN",
-		Phone:      "+8613800001111",
-		TemplateId: "SMS_123",
-		SignName:   "sign",
-		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:   "user-service",
-	}
-	err := validateSendSMSRequest(req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "phone")
-}
-
 func TestValidateSendSMSRequest_PhoneUnparsable(t *testing.T) {
 	req := &pb.SendSMSRequest{
-		RegionCode: "CN",
-		Phone:      "not-a-phone!!!",
+		To:         "+999999999999999", // parses syntactically but is not a valid number
 		TemplateId: "SMS_123",
 		SignName:   "sign",
 		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
@@ -837,26 +800,43 @@ func TestValidateSendSMSRequest_PhoneUnparsable(t *testing.T) {
 	assert.Contains(t, err.Error(), "parse")
 }
 
-func TestValidateSendSMSRequest_RegionMismatch(t *testing.T) {
-	// Region CN but phone parses as RU number (00 international prefix routes
-	// to a different country than the supplied defaultRegion).
-	req := &pb.SendSMSRequest{
-		RegionCode: "CN",
-		Phone:      "0074951234567",
-		TemplateId: "SMS_123",
-		SignName:   "sign",
-		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:   "user-service",
+func TestValidateSendSMSRequest_NumberTypeGate(t *testing.T) {
+	cases := []struct {
+		name    string
+		to      string
+		wantErr string // empty = expect no error
+	}{
+		// Beijing landline: a VALID Chinese number, but SMS goes to mobiles —
+		// rejected before any vendor call.
+		{"CN landline rejected", "+861055555555", "fixed-line"},
+		{"CN mobile passes", "+8613800139000", ""},
+		// US metadata cannot split fixed vs mobile — admitted.
+		{"US fixed-or-mobile passes", "+14155552671", ""},
+		{"HK mobile passes", "+85291234567", ""},
 	}
-	err := validateSendSMSRequest(req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "region")
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &pb.SendSMSRequest{
+				To:         tt.to,
+				TemplateId: "SMS_123",
+				SignName:   "sign",
+				Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+				SenderId:   "user-service",
+			}
+			err := validateSendSMSRequest(req)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestValidateSendSMSRequest_ValidChineseNumber(t *testing.T) {
 	req := &pb.SendSMSRequest{
-		RegionCode: "CN",
-		Phone:      "13800000111",
+		To:         "+8613800000111",
 		TemplateId: "SMS_123",
 		SignName:   "sign",
 		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
@@ -867,22 +847,20 @@ func TestValidateSendSMSRequest_ValidChineseNumber(t *testing.T) {
 
 func TestValidateSendSMSRequest_ValidUSNumber(t *testing.T) {
 	req := &pb.SendSMSRequest{
-		RegionCode: "US",
-		Phone:      "4155552671",
-		Content:    "Your code is 1234",
-		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:   "user-service",
+		To:       "+14155552671",
+		Content:  "Your code is 1234",
+		Scene:    pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		SenderId: "user-service",
 	}
 	assert.NoError(t, validateSendSMSRequest(req))
 }
 
 func TestValidateSendSMSRequest_ValidHKNumber(t *testing.T) {
 	req := &pb.SendSMSRequest{
-		RegionCode: "HK",
-		Phone:      "91234567",
-		Content:    "Your code is 1234",
-		Scene:      pb.SmsScene_SMS_SCENE_LOGIN_CODE,
-		SenderId:   "user-service",
+		To:       "+85291234567",
+		Content:  "Your code is 1234",
+		Scene:    pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		SenderId: "user-service",
 	}
 	assert.NoError(t, validateSendSMSRequest(req))
 }

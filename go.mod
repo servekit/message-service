@@ -16,7 +16,7 @@ require (
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/servekit/gid-service v0.0.0-20260904101455-50bc5a3f8aa5
-	github.com/servekit/go-common v0.0.0-20260904101207-39630b2b22cc
+	github.com/servekit/go-common v0.0.0-20260907134535-5a601f9f7499
 	github.com/stretchr/testify v1.11.1
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.93
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/sms v1.3.93
@@ -107,7 +107,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
-	github.com/servekit/api/gen/go v0.0.0-20260906161859-149a5fb4e9e4
+	github.com/servekit/api/gen/go v0.0.0-20260907134616-c735fd847cc4
 	github.com/shirou/gopsutil/v4 v4.26.5 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/sony/sonyflake/v2 v2.1.0 // indirect
