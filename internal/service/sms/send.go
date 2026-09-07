@@ -86,9 +86,13 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 		release("template params corrupt")
 		return nil, xcodes.ErrInvalidTemplateContent.Wrap(err)
 	}
-	if err := send.ValidateParams(specs, req.GetTemplateParams()); err != nil {
-		release("template param missing")
-		return nil, err
+	// Free-form mode skips required-param enforcement (the author owns the
+	// content); template mode enforces the declared params.
+	if req.GetContent() == "" {
+		if err := send.ValidateParams(specs, req.GetTemplateParams()); err != nil {
+			release("template param missing")
+			return nil, err
+		}
 	}
 
 	id, err := gidservice.NextID(ctx, s.gid)
@@ -154,6 +158,14 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 		return nil, xcodes.ErrInvalidTemplateContent.New(fmt.Sprintf(
 			"template %d kind %s is not an SMS template", template.ID, pb.TemplateKind(template.Kind)))
 	}
+	// Free-form mode (request content set, intl only — validated above):
+	// the request body IS the content ({{param}} rendered); template
+	// required-params are not enforced (the author owns the text). Template-
+	// based vendors in the chain still use their per-vendor codes, so a
+	// mixed chain serves both camps.
+	if req.GetContent() != "" {
+		intlContent = send.Render(req.GetContent(), req.GetTemplateParams())
+	}
 
 	// Dispatch along the ordered chain: weighted start, then list order.
 	// Providers/signatures that fail snapshot resolution are skipped.
@@ -168,7 +180,7 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 	if s.persistence {
 		persistCtx, cancel := context.WithTimeout(context.Background(), utils.PersistTimeout)
 		defer cancel()
-		s.persistSMSRecord(persistCtx, id, app, req, e164, regionCode, result)
+		s.persistSMSRecord(persistCtx, id, app, req, e164, regionCode, intlContent, result)
 	}
 
 	if result.err != nil {
@@ -198,6 +210,15 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 		Status: pb.MessageStatus_MESSAGE_STATUS_SENT,
 		Vendor: &pb.SendResponse_SmsVendor{SmsVendor: result.vendor},
 	}, nil
+}
+
+// intlContentUsed reports the audit content for a record: the rendered
+// intl body, empty on the CN path.
+func intlContentUsed(regionCode, intlContent string) string {
+	if regionCode == "CN" {
+		return ""
+	}
+	return intlContent
 }
 
 // smsOutcome summarizes a chain dispatch.
@@ -303,17 +324,19 @@ func sceneList(snap *registry.Snapshot, appID int64, channel pb.TemplateChannel)
 
 // --- record persistence (synchronous, error-logged) ---
 
-func (s *Service) persistSMSRecord(ctx context.Context, id int64, app *models.MessageApp, req *pb.SendSMSRequest, e164, regionCode string, result *smsOutcome) {
+func (s *Service) persistSMSRecord(ctx context.Context, id int64, app *models.MessageApp, req *pb.SendSMSRequest, e164, regionCode, intlContent string, result *smsOutcome) {
 	record := &models.MessageSMSRecord{
-		ID:             id,
-		Vendor:         int32(result.vendor),
-		Account:        result.account,
-		Scene:          int32(req.GetScene()),
-		RegionCode:     regionCode,
-		Phone:          e164,
-		AppKey:         app.AppKey,
-		SignName:       result.signName,
-		Content:        "",
+		ID:         id,
+		Vendor:     int32(result.vendor),
+		Account:    result.account,
+		Scene:      int32(req.GetScene()),
+		RegionCode: regionCode,
+		Phone:      e164,
+		AppKey:     app.AppKey,
+		SignName:   result.signName,
+		// CN content lives at the vendor (TemplateID carries the code);
+		// intl carries the rendered body actually sent.
+		Content:        intlContentUsed(regionCode, intlContent),
 		TemplateID:     result.templateCode,
 		TemplateParams: models.MapStringString(req.GetTemplateParams()),
 		Attempts:       result.attempts,
@@ -409,6 +432,11 @@ func validateSendSMSRequest(req *pb.SendSMSRequest) error {
 	rc := phonenumbers.GetRegionCodeForNumber(num)
 	if rc == "" || rc == "ZZ" {
 		return fmt.Errorf("phone %q has no resolvable destination country", to)
+	}
+	// Free-form content is international-only: CN destinations must use
+	// vendor pre-registered templates (regulatory).
+	if req.GetContent() != "" && rc == "CN" {
+		return fmt.Errorf("content is not allowed for CN (domestic) SMS — vendors require pre-registered templates")
 	}
 	return nil
 }

@@ -304,3 +304,64 @@ func TestSendSMSQuota(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DAILY_QUOTA_EXCEEDED")
 }
+
+func TestSendSMSIntlFreeFormContent(t *testing.T) {
+	fx := newSMSFixture(t)
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To:             "+14155550123",
+		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		Content:        "Hi {{nickname}}, code {{code}}",
+		TemplateParams: map[string]string{"nickname": "Ada", "code": "777"},
+	})
+	require.NoError(t, err)
+	// free content rendered and delivered on the intl path
+	var intl *provesms.InternationalMessage
+	if fx.aliyun.calls == 1 && fx.aliyun.lastIntl != nil {
+		intl = fx.aliyun.lastIntl
+	} else {
+		intl = fx.tencent.lastIntl
+	}
+	require.NotNil(t, intl)
+	assert.Equal(t, "Hi Ada, code 777", intl.Content)
+	// vendor-code template still rides along for template-based vendors
+	assert.NotEmpty(t, intl.TemplateID, "vendor codes must stay available for template-based vendors in the chain")
+
+	// record carries the rendered intl body
+	records, err := dal.ListSMSRecords(context.Background(), fx.db, dal.SmsListFilter{
+		AppKey: fx.app.AppKey,
+	}, dbx.PageParams{Page: 1, PageSize: 10, Count: true})
+	require.NoError(t, err)
+	require.Len(t, records.List, 1)
+	assert.Equal(t, "Hi Ada, code 777", records.List[0].Content)
+}
+
+func TestSendSMSFreeFormRejectedForCN(t *testing.T) {
+	fx := newSMSFixture(t)
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To:      "+8613800138000",
+		Scene:   pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		Content: "free text to a CN number",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "BAD_REQUEST")
+}
+
+func TestSendSMSIntlFreeFormWithoutParams(t *testing.T) {
+	fx := newSMSFixture(t)
+	// free content, NO template params at all — must not trip the
+	// required-param ("code") enforcement
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+		To:      "+14155550124",
+		Scene:   pb.SmsScene_SMS_SCENE_LOGIN_CODE,
+		Content: "plain free text, no placeholders",
+	})
+	require.NoError(t, err)
+	var intl *provesms.InternationalMessage
+	if fx.aliyun.calls == 1 && fx.aliyun.lastIntl != nil {
+		intl = fx.aliyun.lastIntl
+	} else {
+		intl = fx.tencent.lastIntl
+	}
+	require.NotNil(t, intl)
+	assert.Equal(t, "plain free text, no placeholders", intl.Content)
+}
