@@ -145,10 +145,10 @@ func newFixture(t *testing.T, providers ...*mockEmailProvider) *fixture {
 	require.NoError(t, err)
 	policy := &models.MessagePolicy{
 		ID: 301, AppID: app.ID,
-		Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL),
-		Scene:   int32(pb.EmailScene_EMAIL_SCENE_LOGIN_CODE),
+		Channel:    int32(pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL),
+		Scene:      int32(pb.EmailScene_EMAIL_SCENE_LOGIN_CODE),
 		TemplateID: template.ID,
-		Routes:  routesJSON,
+		Routes:     routesJSON,
 	}
 	require.NoError(t, dal.CreatePolicy(context.Background(), db, policy))
 
@@ -213,8 +213,8 @@ func TestSendEmailPolicyDriven(t *testing.T) {
 func TestSendEmailPolicyNotFound(t *testing.T) {
 	fx := newFixture(t, &mockEmailProvider{name: "p"})
 	_, err := fx.svc.SendEmail(context.Background(), fx.app, &pb.SendEmailRequest{
-		To:    []*pb.EmailAddress{{Email: "to@example.com"}},
-		Scene: pb.EmailScene_EMAIL_SCENE_REGISTER, // no policy configured
+		To:             []*pb.EmailAddress{{Email: "to@example.com"}},
+		Scene:          pb.EmailScene_EMAIL_SCENE_REGISTER, // no policy configured
 		TemplateParams: map[string]string{"code": "1"},
 	})
 	require.Error(t, err)

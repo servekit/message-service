@@ -84,11 +84,11 @@ type MessageApp struct {
 // decides how Vendor (the respective SmsVendor/EmailVendor enum value) and
 // Config (the vendor-specific credential JSON) are interpreted.
 type MessageChannelAccount struct {
-	ID     int64  `gorm:"primaryKey"`
-	Channel int32 `gorm:"not null;default:0;index"`
-	Vendor  int32 `gorm:"not null;default:0"`
-	Name    string `gorm:"size:64;uniqueIndex;not null"`
-	Disabled bool  `gorm:"not null;default:false"`
+	ID       int64  `gorm:"primaryKey"`
+	Channel  int32  `gorm:"not null;default:0;index"`
+	Vendor   int32  `gorm:"not null;default:0"`
+	Name     string `gorm:"size:64;uniqueIndex;not null"`
+	Disabled bool   `gorm:"not null;default:false"`
 	Remark   string `gorm:"size:256"`
 	// Config holds the vendor credential JSON: provesms.AccountConfig JSON
 	// (without name) for SMS accounts, provemail.AccountConfig JSON for
@@ -101,10 +101,10 @@ type MessageChannelAccount struct {
 
 // MessageSignature is an SMS signature (CN) / sender ID (intl).
 type MessageSignature struct {
-	ID       int64  `gorm:"primaryKey"`
-	Name     string `gorm:"size:64;uniqueIndex;not null"`
-	Disabled bool   `gorm:"not null;default:false"`
-	Remark   string `gorm:"size:256"`
+	ID        int64  `gorm:"primaryKey"`
+	Name      string `gorm:"size:64;uniqueIndex;not null"`
+	Disabled  bool   `gorm:"not null;default:false"`
+	Remark    string `gorm:"size:256"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
@@ -135,14 +135,14 @@ type TemplateParamSpec struct {
 //   - (SMS, SMS_VENDOR_CODES):   {"vendor_codes": [{vendor, template_code}]}
 //   - (SMS, SMS_CONTENT):        {"sms_content": {content}}
 type MessageTemplate struct {
-	ID       int64  `gorm:"primaryKey"`
-	AppID    int64  `gorm:"column:app_id;not null;default:0;index"`
-	Name     string `gorm:"size:200;not null"`
-	Channel  int32  `gorm:"not null;default:0"`
-	Kind     int32  `gorm:"not null;default:0"`
-	Disabled bool   `gorm:"not null;default:false"`
-	Params   RawJSON `gorm:"type:json;column:params"`
-	Content  RawJSON `gorm:"type:json;column:content"`
+	ID        int64   `gorm:"primaryKey"`
+	AppID     int64   `gorm:"column:app_id;not null;default:0;index"`
+	Name      string  `gorm:"size:200;not null"`
+	Channel   int32   `gorm:"not null;default:0"`
+	Kind      int32   `gorm:"not null;default:0"`
+	Disabled  bool    `gorm:"not null;default:false"`
+	Params    RawJSON `gorm:"type:json;column:params"`
+	Content   RawJSON `gorm:"type:json;column:content"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
@@ -154,12 +154,12 @@ type MessageTemplate struct {
 // signature_id, weight) — ordered fallback chains; IntlRoutes applies to
 // international SMS destinations only.
 type MessagePolicy struct {
-	ID         int64  `gorm:"primaryKey"`
-	AppID      int64  `gorm:"column:app_id;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
-	Channel    int32  `gorm:"column:channel;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
-	Scene      int32  `gorm:"column:scene;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
-	TemplateID int64  `gorm:"column:template_id;not null"`
-	Disabled   bool   `gorm:"not null;default:false"`
+	ID         int64   `gorm:"primaryKey"`
+	AppID      int64   `gorm:"column:app_id;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
+	Channel    int32   `gorm:"column:channel;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
+	Scene      int32   `gorm:"column:scene;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
+	TemplateID int64   `gorm:"column:template_id;not null"`
+	Disabled   bool    `gorm:"not null;default:false"`
 	Routes     RawJSON `gorm:"type:json;column:routes"`
 	IntlRoutes RawJSON `gorm:"type:json;column:intl_routes"`
 	CreatedAt  time.Time

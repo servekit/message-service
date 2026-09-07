@@ -34,8 +34,8 @@ type Client struct {
 
 // Compile-time assertions: *Client and *Handler expose the same interfaces.
 var (
-	_ pb.MessageServiceServer       = (*Client)(nil)
-	_ pb.MessageAdminServiceServer  = (*Client)(nil)
+	_ pb.MessageServiceServer      = (*Client)(nil)
+	_ pb.MessageAdminServiceServer = (*Client)(nil)
 )
 
 // NewClient creates a Client connected to the given target.

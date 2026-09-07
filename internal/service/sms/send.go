@@ -202,12 +202,12 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 
 // smsOutcome summarizes a chain dispatch.
 type smsOutcome struct {
-	vendor    pb.SmsVendor
-	account   string
-	signName  string
+	vendor       pb.SmsVendor
+	account      string
+	signName     string
 	templateCode string
-	attempts  int
-	err       error
+	attempts     int
+	err          error
 }
 
 // dispatchChain walks the ordered route chain. For each route: resolve the

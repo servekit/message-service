@@ -154,8 +154,8 @@ type EmailContent struct {
 
 // VendorCode is one entry of the (SMS, SMS_VENDOR_CODES) mapping.
 type VendorCode struct {
-	Vendor      pb.SmsVendor `json:"vendor"`
-	TemplateCode string      `json:"template_code"`
+	Vendor       pb.SmsVendor `json:"vendor"`
+	TemplateCode string       `json:"template_code"`
 }
 
 // SmsContent is the (SMS, SMS_CONTENT) template body.
@@ -166,9 +166,9 @@ type SmsContent struct {
 // contentEnvelope mirrors the proto oneof JSON shape used in the Content
 // column: exactly one arm set, matching (channel, kind).
 type contentEnvelope struct {
-	Email       *EmailContent  `json:"email,omitempty"`
-	VendorCodes []VendorCode   `json:"vendor_codes,omitempty"`
-	SmsContent  *SmsContent    `json:"sms_content,omitempty"`
+	Email       *EmailContent `json:"email,omitempty"`
+	VendorCodes []VendorCode  `json:"vendor_codes,omitempty"`
+	SmsContent  *SmsContent   `json:"sms_content,omitempty"`
 }
 
 // MarshalContent encodes a template content document for storage.

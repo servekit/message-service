@@ -137,13 +137,13 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 	}
 
 	msg := &provemail.Message{
-		To:      pbToAddrs(req.GetTo()),
-		Cc:      pbToAddrs(req.GetCc()),
-		Bcc:     pbToAddrs(req.GetBcc()),
-		Subject: subject,
-		Body:    textBody,
+		To:       pbToAddrs(req.GetTo()),
+		Cc:       pbToAddrs(req.GetCc()),
+		Bcc:      pbToAddrs(req.GetBcc()),
+		Subject:  subject,
+		Body:     textBody,
 		HTMLBody: htmlBody,
-		ReplyTo: pbToAddr(req.GetReplyTo()),
+		ReplyTo:  pbToAddr(req.GetReplyTo()),
 		// Template carries the platform template ID as an audit label (SMTP
 		// ignores it — rendering already happened platform-side).
 		Template:       strconv.FormatInt(template.ID, 10),

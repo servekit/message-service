@@ -32,11 +32,11 @@ func credentialsToModel(name string, c *pb.ChannelAccountCredentials) (models.Ra
 	case *pb.ChannelAccountCredentials_TencentSms:
 		cfg := arm.TencentSms
 		ac := &provesms.AccountConfig{Name: name, Tencent: &provesms.TencentConfig{
-			SecretID:   cfg.GetSecretId(),
-			SecretKey:  cfg.GetSecretKey(),
+			SecretID:    cfg.GetSecretId(),
+			SecretKey:   cfg.GetSecretKey(),
 			SmsSdkAppID: cfg.GetSmsSdkAppId(),
-			Region:     cfg.GetRegion(),
-			Endpoint:   cfg.GetEndpoint(),
+			Region:      cfg.GetRegion(),
+			Endpoint:    cfg.GetEndpoint(),
 		}}
 		return marshalConfig(ac), int32(pb.SmsVendor_SMS_VENDOR_TENCENT), pb.TemplateChannel_TEMPLATE_CHANNEL_SMS, nil
 	case *pb.ChannelAccountCredentials_VolcengineSms:
@@ -60,11 +60,11 @@ func credentialsToModel(name string, c *pb.ChannelAccountCredentials) (models.Ra
 	case *pb.ChannelAccountCredentials_HuaweiSms:
 		cfg := arm.HuaweiSms
 		ac := &provesms.AccountConfig{Name: name, Huawei: &provesms.HuaweiConfig{
-			AppKey:   cfg.GetAppKey(),
+			AppKey:    cfg.GetAppKey(),
 			AppSecret: cfg.GetAppSecret(),
-			Sign:     cfg.GetSign(),
-			Endpoint: cfg.GetEndpoint(),
-			Region:   cfg.GetRegion(),
+			Sign:      cfg.GetSign(),
+			Endpoint:  cfg.GetEndpoint(),
+			Region:    cfg.GetRegion(),
 		}}
 		return marshalConfig(ac), int32(pb.SmsVendor_SMS_VENDOR_HUAWEI), pb.TemplateChannel_TEMPLATE_CHANNEL_SMS, nil
 	case *pb.ChannelAccountCredentials_Smtp:
