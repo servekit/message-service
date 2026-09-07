@@ -3,7 +3,7 @@
 ## 项目定位
 
 消息发送服务。负责短信、邮件等消息的发送、记录与供应商管理。
-底层发送能力由 `go-common/message` 提供（已实现 SMTP、Mailgun 邮件和阿里云短信等供应商），本服务负责工程化封装：消息持久化、供应商配置、发送记录查询。
+底层发送能力由 `internal/provider/{sms,email}`(本仓实现) 提供（已实现 SMTP、Mailgun 邮件和阿里云短信等供应商），本服务负责工程化封装：消息持久化、供应商配置、发送记录查询。
 可独立部署为 gRPC 服务（`pkg/Server`），也可作为 Go 模块 in-process 使用（`pkg/Module`），或通过 gRPC 客户端远程调用（`pkg/Client`）。
 
 ## 架构设计
@@ -16,9 +16,9 @@
 
 ### 与 go-common/message 的关系
 
-- `go-common/message` 提供底层发送能力（`email.Sender`、`sms.Sender`、`sms.Router`）
+- `internal/provider/{sms,email}`(本仓实现) 提供底层发送能力（`email.Sender`、`sms.Sender`、`sms.Router`）
 - message-service 在 service 层调用这些 Sender，不直接操作供应商 API
-- 新增供应商或消息类型时，只需扩展 `go-common/message`，message-service 无需改动
+- 新增供应商或消息类型时，只需扩展 `internal/provider/{sms,email}`(本仓实现)，message-service 无需改动
 - message-service 新增的是：发送记录持久化、供应商配置管理、发送历史查询等工程化能力
 
 ## 技术栈约定

@@ -1,6 +1,8 @@
 # message-service
 
-消息发送服务:负责短信、邮件的发送、记录与查询。底层发送能力由 `go-common/message` 提供(已实现 SMTP / Mailgun / Aliyun / Tencent / Volcengine / Byteplus 等供应商),本服务负责工程化封装:**幂等去重、消息持久化、发送记录查询、按区域路由**。
+**策略化消息发送平台**:短信、邮件的服务商账号、签名、模板、发送策略全部入库,通过 `MessageAdminService`(gRPC)+ testkit web 管理页维护,运行期热更新。调用方只需传 **app 凭据 + 场景 + 收件人 + 模板参数**——平台完成策略路由(应用×通道×场景)→ 模板渲染 → 签名/账号选择 → 有序降级发送 → 落库审计。供应商实现在 `internal/provider/{sms,email}`(阿里/腾讯/火山/Byteplus/华为 + SMTP),设计见 `specs/2026-09-07-message-platform-design.md`。
+
+**核心概念**:App(调用方身份,x-app-key/x-app-secret)→ ChannelAccount(平台级服务商凭据池)→ Signature(签名与账号报备绑定)→ Template(邮件平台渲染 / 国内短信厂商码映射 / 国际短信内容模板)→ Policy((应用,通道,场景)→ 模板 + 国内/国际有序路由链,权重选起点、失败沿链降级)。发送链:认证 → 日限额(Redis)→ 幂等(app_key 命名空间)→ 参数校验+`{{param}}` 渲染 → E.164 归属国选链 → 降级发送 → 记录(app_key/厂商/账号/签名/模板码)。
 
 支持三种使用方式(与 user-service 一致):
 
@@ -32,10 +34,10 @@
 
 | 组件 | 用途 | 备注 |
 |---|---|---|
-| PostgreSQL | 持久化发送记录(`message_email_records` / `message_sms_records`) | 可 per-channel 关闭 |
-| Redis | **幂等硬依赖** + 必选,服务启动时 Ping | 关闭会导致 SendEmail/SendSMS 失败 |
+| PostgreSQL | 发送记录 + 平台资源表(apps/channel_accounts/signatures/templates/policies) | 可 per-channel 关闭记录 |
+| Redis | **幂等硬依赖** + 日限额计数 | 关闭会导致 SendEmail/SendSMS 失败 |
 | gid-service | 雪花算法 ID 生成 | 通过 gRPC 获取 record_id |
-| `go-common/message` | 底层 vendor 抽象(SMTP / Aliyun / Tencent / ...) | 配置在 yaml 里 |
+| vendor SDK | `internal/provider/{sms,email}` 内实现 | 凭据在 DB,管理页维护 |
 
 ---
 
@@ -47,6 +49,7 @@
 |---|---|
 | `./message-service` 或 `./message-service serve` | 启动 gRPC 服务(默认) |
 | `./message-service migrate` | 执行 GORM AutoMigrate 后退出 |
+| `./message-service migrate --seed-from-config` | AutoMigrate + 把存量 YAML 账号一次性导入平台池 | 幂等(按名跳过) |
 | 其他 | 打印用法,exit 2 |
 
 本地开发:
@@ -76,6 +79,8 @@ docker run <image> migrate    # 跑迁移(one-shot)
 ---
 
 ## 核心机制
+
+> 服务商账号/签名/模板/策略不再来自 YAML——通过管理页(或 admin gRPC)配置,注册表热更新(变更即时生效 + 每分钟 cron 兜底收敛)。鉴权定调:内网 gRPC 全信任,服务层零鉴权,API 权限归网关(未来 RBAC + 规则引擎)。
 
 ### 幂等(Redis)
 
