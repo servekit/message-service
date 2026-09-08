@@ -7,6 +7,7 @@ import (
 	commonv1 "github.com/servekit/api/gen/go/common/v1"
 	pb "github.com/servekit/api/gen/go/messaging/v1"
 
+	"github.com/servekit/go-common/grpcx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -44,6 +45,7 @@ func NewClient(target string, opts ...grpc.DialOption) (*Client, error) {
 	if len(opts) == 0 {
 		opts = []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	}
+	opts = append(opts, grpc.WithChainUnaryInterceptor(grpcx.ForwardActorUnary()))
 	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", target, err)
