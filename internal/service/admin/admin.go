@@ -589,6 +589,7 @@ func appToProto(a *models.MessageApp) *pb.MessageAppInfo {
 	info := &pb.MessageAppInfo{
 		Id:              a.ID,
 		AppKey:          a.AppKey,
+		AppSecret:       a.AppSecret,
 		Name:            a.Name,
 		Disabled:        a.Disabled,
 		SmsDailyLimit:   a.SMSDailyLimit,
