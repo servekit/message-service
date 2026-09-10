@@ -3,6 +3,12 @@
 // / policies). Every mutation writes the DB, then refreshes the in-process
 // registry snapshot immediately — cross-node convergence is handled by the
 // cron refresh.
+//
+// Actor scope (phase ④ T5): every RPC resolves the caller's scope first
+// (internal/service/admin/actor.go) — an injected tenant key pins the
+// caller to that tenant (two-layer list domain, create clamping,
+// ownership-checked mutations), a PLATFORM actor without injection gets the
+// cross-view, anything else fails closed.
 package admin
 
 import (
@@ -56,10 +62,15 @@ func (s *Service) nextID(ctx context.Context) (int64, error) {
 // --- Apps ---
 
 // CreateApp registers a calling app and returns the plaintext app_secret
-// exactly once. The app is stamped with its tenant mapping: an explicit
+// exactly once. The app is stamped with its tenant mapping: a scoped caller
+// (injected key) is clamped to that key; the cross-view keeps an explicit
 // tenant_key when given, else the app_key literal (the legacy→tenant
 // fallback value; T10 总装 remaps).
 func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.CreateAppResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	appKey := req.GetAppKey()
 	if appKey == "" {
 		// Server-generated identity: "app_" + 8 random base36 chars.
@@ -77,7 +88,7 @@ func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.
 	} else if _, err := dal.GetAppByKey(ctx, s.db, appKey); err == nil {
 		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("app_key %q already exists", appKey))
 	}
-	tenantKey := req.GetTenantKey()
+	tenantKey := clampTenantKey(scope, req.GetTenantKey())
 	if tenantKey == "" {
 		tenantKey = appKey
 	}
@@ -109,19 +120,37 @@ func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.
 	return &pb.CreateAppResponse{App: appToProto(app), AppSecret: secret}, nil
 }
 
-// GetApp returns one app by id.
+// GetApp returns one app by id. A scoped caller sees only the app mapped
+// to their tenant (foreign apps answer not-found — anti-enumeration).
 func (s *Service) GetApp(ctx context.Context, req *pb.GetAppRequest) (*pb.GetAppResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	app, err := dal.GetApp(ctx, s.db, req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, app.TenantKey,
+		xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	return &pb.GetAppResponse{App: appToProto(app)}, nil
 }
 
 // UpdateApp tweaks app metadata; absent optional fields keep their values.
+// Ownership-checked against the caller's scope.
 func (s *Service) UpdateApp(ctx context.Context, req *pb.UpdateAppRequest) (*pb.UpdateAppResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	app, err := dal.GetApp(ctx, s.db, req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, app.TenantKey,
+		xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if req.Name != nil {
@@ -144,10 +173,18 @@ func (s *Service) UpdateApp(ctx context.Context, req *pb.UpdateAppRequest) (*pb.
 }
 
 // RotateAppSecret invalidates the current secret and returns a new
-// plaintext exactly once.
+// plaintext exactly once. Ownership-checked against the caller's scope.
 func (s *Service) RotateAppSecret(ctx context.Context, req *pb.RotateAppSecretRequest) (*pb.RotateAppSecretResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	app, err := dal.GetApp(ctx, s.db, req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, app.TenantKey,
+		xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	secret, err := mintSecret()
@@ -162,19 +199,38 @@ func (s *Service) RotateAppSecret(ctx context.Context, req *pb.RotateAppSecretRe
 	return &pb.RotateAppSecretResponse{App: appToProto(app), AppSecret: secret}, nil
 }
 
-// ListApps returns all apps.
+// ListApps returns the apps in the caller's scope: the two-layer domain for
+// an injected key (platform pool + own mapping — in practice apps always
+// carry a tenant, so this is the own mapping), all apps for the cross-view.
 func (s *Service) ListApps(ctx context.Context, _ *pb.ListAppsRequest) (*pb.ListAppsResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	apps := s.reg.Current().Apps()
-	out := make([]*pb.MessageAppInfo, len(apps))
-	for i, a := range apps {
-		out[i] = appToProto(a)
+	out := make([]*pb.MessageAppInfo, 0, len(apps))
+	for _, a := range apps {
+		if !visibleInTenant(scope, models.AppTenantKey(a)) {
+			continue
+		}
+		out = append(out, appToProto(a))
 	}
 	return &pb.ListAppsResponse{Apps: out}, nil
 }
 
 // DeleteApp soft-deletes an app; its sends fail immediately.
+// Ownership-checked against the caller's scope.
 func (s *Service) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*emptypb.Empty, error) {
-	if _, err := dal.GetApp(ctx, s.db, req.GetId()); err != nil {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	app, err := dal.GetApp(ctx, s.db, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, app.TenantKey,
+		xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if err := dal.DeleteApp(ctx, s.db, req.GetId()); err != nil {
@@ -188,8 +244,14 @@ func (s *Service) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*emp
 
 // CreateChannelAccount adds a vendor account to the pool: the platform
 // pool when tenant_key is absent, tenant-private when set (phase ③
-// resource domain — a NULL tenant_key stays usable by every tenant).
+// resource domain — a NULL tenant_key stays usable by every tenant). A
+// scoped caller is clamped to the injected key (pool writes are
+// PLATFORM-only).
 func (s *Service) CreateChannelAccount(ctx context.Context, req *pb.CreateChannelAccountRequest) (*pb.CreateChannelAccountResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	ac, vendor, channel, err := credentialsToModel(req.GetName(), req.GetCredentials())
 	if err != nil {
 		return nil, err
@@ -205,7 +267,7 @@ func (s *Service) CreateChannelAccount(ctx context.Context, req *pb.CreateChanne
 		Name:      req.GetName(),
 		Remark:    req.GetRemark(),
 		Config:    ac,
-		TenantKey: models.TenantKeyPtr(req.GetTenantKey()),
+		TenantKey: models.TenantKeyPtr(clampTenantKey(scope, req.GetTenantKey())),
 	}
 	if err := dal.CreateChannelAccount(ctx, s.db, account); err != nil {
 		return nil, err
@@ -215,9 +277,19 @@ func (s *Service) CreateChannelAccount(ctx context.Context, req *pb.CreateChanne
 }
 
 // UpdateChannelAccount edits remark/disabled or replaces credentials.
+// Ownership-checked after the row load: foreign rows answer not-found,
+// the platform pool is read-only for scoped callers.
 func (s *Service) UpdateChannelAccount(ctx context.Context, req *pb.UpdateChannelAccountRequest) (*pb.UpdateChannelAccountResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	account, err := dal.GetChannelAccount(ctx, s.db, req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, account.TenantKey,
+		xcodes.ErrChannelAccountNotFound.New(fmt.Sprintf("account %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if req.Remark != nil {
@@ -243,8 +315,18 @@ func (s *Service) UpdateChannelAccount(ctx context.Context, req *pb.UpdateChanne
 }
 
 // DeleteChannelAccount soft-deletes an account from the pool.
+// Ownership-checked after the row load.
 func (s *Service) DeleteChannelAccount(ctx context.Context, req *pb.DeleteChannelAccountRequest) (*emptypb.Empty, error) {
-	if _, err := dal.GetChannelAccount(ctx, s.db, req.GetId()); err != nil {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	account, err := dal.GetChannelAccount(ctx, s.db, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, account.TenantKey,
+		xcodes.ErrChannelAccountNotFound.New(fmt.Sprintf("account %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if err := dal.DeleteChannelAccount(ctx, s.db, req.GetId()); err != nil {
@@ -254,12 +336,21 @@ func (s *Service) DeleteChannelAccount(ctx context.Context, req *pb.DeleteChanne
 	return &emptypb.Empty{}, nil
 }
 
-// ListChannelAccounts returns the full pool with secrets masked.
+// ListChannelAccounts returns the pool with secrets masked, scoped to the
+// caller: the two-layer domain (platform pool + own rows) for an injected
+// key, the full pool for the cross-view.
 func (s *Service) ListChannelAccounts(ctx context.Context, _ *pb.ListChannelAccountsRequest) (*pb.ListChannelAccountsResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	accounts := s.reg.Current().ChannelAccounts()
-	out := make([]*pb.ChannelAccountInfo, len(accounts))
-	for i, a := range accounts {
-		out[i] = s.accountToProto(ctx, a)
+	out := make([]*pb.ChannelAccountInfo, 0, len(accounts))
+	for _, a := range accounts {
+		if !visibleInTenant(scope, models.TenantKeyOf(a.TenantKey)) {
+			continue
+		}
+		out = append(out, s.accountToProto(ctx, a))
 	}
 	return &pb.ListChannelAccountsResponse{Accounts: out}, nil
 }
@@ -303,9 +394,15 @@ func (s *Service) accountToProto(_ context.Context, a *models.MessageChannelAcco
 // --- Signatures ---
 
 // CreateSignature registers a signature with its account bindings:
-// platform pool when tenant_key is absent, tenant-private when set.
+// platform pool when tenant_key is absent, tenant-private when set. A
+// scoped caller is clamped to the injected key (pool writes are
+// PLATFORM-only).
 func (s *Service) CreateSignature(ctx context.Context, req *pb.CreateSignatureRequest) (*pb.CreateSignatureResponse, error) {
-	tenantKey := req.GetTenantKey()
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tenantKey := clampTenantKey(scope, req.GetTenantKey())
 	if err := s.validateBindingAccounts(ctx, tenantKey, req.GetAccountIds()); err != nil {
 		return nil, err
 	}
@@ -315,7 +412,7 @@ func (s *Service) CreateSignature(ctx context.Context, req *pb.CreateSignatureRe
 	}
 	sig := &models.MessageSignature{
 		ID: id, Name: req.GetName(), Remark: req.GetRemark(),
-		TenantKey: models.TenantKeyPtr(req.GetTenantKey()),
+		TenantKey: models.TenantKeyPtr(tenantKey),
 	}
 	if err := dal.CreateSignature(ctx, s.db, sig, req.GetAccountIds()); err != nil {
 		return nil, err
@@ -324,10 +421,19 @@ func (s *Service) CreateSignature(ctx context.Context, req *pb.CreateSignatureRe
 	return &pb.CreateSignatureResponse{Signature: s.signatureToProto(sig, req.GetAccountIds())}, nil
 }
 
-// UpdateSignature replaces remark/disabled/bindings.
+// UpdateSignature replaces remark/disabled/bindings. Ownership-checked
+// after the row load.
 func (s *Service) UpdateSignature(ctx context.Context, req *pb.UpdateSignatureRequest) (*pb.UpdateSignatureResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	sig, err := dal.GetSignature(ctx, s.db, req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, sig.TenantKey,
+		xcodes.ErrSignatureNotFound.New(fmt.Sprintf("signature %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if req.Remark != nil {
@@ -351,8 +457,18 @@ func (s *Service) UpdateSignature(ctx context.Context, req *pb.UpdateSignatureRe
 }
 
 // DeleteSignature soft-deletes a signature and its bindings.
+// Ownership-checked after the row load.
 func (s *Service) DeleteSignature(ctx context.Context, req *pb.DeleteSignatureRequest) (*emptypb.Empty, error) {
-	if _, err := dal.GetSignature(ctx, s.db, req.GetId()); err != nil {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sig, err := dal.GetSignature(ctx, s.db, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, sig.TenantKey,
+		xcodes.ErrSignatureNotFound.New(fmt.Sprintf("signature %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if err := dal.DeleteSignature(ctx, s.db, req.GetId()); err != nil {
@@ -362,12 +478,21 @@ func (s *Service) DeleteSignature(ctx context.Context, req *pb.DeleteSignatureRe
 	return &emptypb.Empty{}, nil
 }
 
-// ListSignatures returns all signatures with bindings.
+// ListSignatures returns signatures with bindings, scoped to the caller:
+// the two-layer domain (platform pool + own rows) for an injected key, all
+// signatures for the cross-view.
 func (s *Service) ListSignatures(ctx context.Context, _ *pb.ListSignaturesRequest) (*pb.ListSignaturesResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	sigs := s.reg.Current().Signatures()
-	out := make([]*pb.SignatureInfo, len(sigs))
-	for i, sig := range sigs {
-		out[i] = s.signatureToProto(sig, s.reg.Current().SignatureAccounts(sig.ID))
+	out := make([]*pb.SignatureInfo, 0, len(sigs))
+	for _, sig := range sigs {
+		if !visibleInTenant(scope, models.TenantKeyOf(sig.TenantKey)) {
+			continue
+		}
+		out = append(out, s.signatureToProto(sig, s.reg.Current().SignatureAccounts(sig.ID)))
 	}
 	return &pb.ListSignaturesResponse{Signatures: out}, nil
 }
@@ -411,9 +536,15 @@ func checkResourceDomain(kind string, id int64, name string, resourceTenant *str
 
 // CreateTemplate registers a template definition. app_id 0 = shared
 // (tenant_key NULL); otherwise the template is stamped with the app's
-// mapped tenant (the app must exist — the tenant is derived from it).
+// mapped tenant (the app must exist — the tenant is derived from it). A
+// scoped caller must reference an app mapped to their own tenant — shared
+// templates are PLATFORM-only and foreign apps answer not-found.
 func (s *Service) CreateTemplate(ctx context.Context, req *pb.CreateTemplateRequest) (*pb.CreateTemplateResponse, error) {
-	tenantKey, err := s.templateTenant(req.GetAppId())
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tenantKey, err := s.templateTenant(scope, req.GetAppId())
 	if err != nil {
 		return nil, err
 	}
@@ -439,23 +570,41 @@ func (s *Service) CreateTemplate(ctx context.Context, req *pb.CreateTemplateRequ
 
 // templateTenant resolves the owning tenant for a template scoped to
 // appID: "" (shared) for app_id 0, the app's mapped tenant otherwise.
-// Unknown apps are refused — the tenant cannot be derived.
-func (s *Service) templateTenant(appID int64) (string, error) {
+// Unknown apps are refused — the tenant cannot be derived. Under a scope
+// the reference is verified against the caller's tenant (app_id 0 shared
+// is PLATFORM-only; foreign apps answer not-found so existence of another
+// tenant's app mapping never leaks).
+func (s *Service) templateTenant(scope string, appID int64) (string, error) {
 	if appID == 0 {
+		if scope != "" {
+			return "", xcodes.ErrForbidden.New("shared (app_id 0) templates are platform-only")
+		}
 		return "", nil
 	}
 	app := s.reg.Current().AppByID(appID)
 	if app == nil {
 		return "", xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", appID))
 	}
-	return models.AppTenantKey(app), nil
+	tenant := models.AppTenantKey(app)
+	if scope != "" && tenant != scope {
+		return "", xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", appID))
+	}
+	return tenant, nil
 }
 
 // UpdateTemplate fully replaces a template definition. Ownership (app_id /
-// tenant_key) is immutable.
+// tenant_key) is immutable. Ownership-checked against the caller's scope.
 func (s *Service) UpdateTemplate(ctx context.Context, req *pb.UpdateTemplateRequest) (*pb.UpdateTemplateResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	existing, err := dal.GetTemplate(ctx, s.db, req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, existing.TenantKey,
+		xcodes.ErrTemplateNotFound.New(fmt.Sprintf("template %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	t, err := templateToModel(req.GetTemplate(), existing.AppID)
@@ -472,9 +621,19 @@ func (s *Service) UpdateTemplate(ctx context.Context, req *pb.UpdateTemplateRequ
 	return &pb.UpdateTemplateResponse{Template: templateToProto(t)}, nil
 }
 
-// DeleteTemplate soft-deletes a template.
+// DeleteTemplate soft-deletes a template. Ownership-checked against the
+// caller's scope.
 func (s *Service) DeleteTemplate(ctx context.Context, req *pb.DeleteTemplateRequest) (*emptypb.Empty, error) {
-	if _, err := dal.GetTemplate(ctx, s.db, req.GetId()); err != nil {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := dal.GetTemplate(ctx, s.db, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageRow(scope, existing.TenantKey,
+		xcodes.ErrTemplateNotFound.New(fmt.Sprintf("template %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if err := dal.DeleteTemplate(ctx, s.db, req.GetId()); err != nil {
@@ -484,12 +643,21 @@ func (s *Service) DeleteTemplate(ctx context.Context, req *pb.DeleteTemplateRequ
 	return &emptypb.Empty{}, nil
 }
 
-// ListTemplates filters by app (0 = all) and channel (0 = all).
+// ListTemplates filters by app (0 = all) and channel (0 = all), scoped to
+// the caller: the two-layer domain (shared + own rows) for an injected
+// key, everything for the cross-view.
 func (s *Service) ListTemplates(ctx context.Context, req *pb.ListTemplatesRequest) (*pb.ListTemplatesResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	templates := s.reg.Current().Templates(req.GetAppId(), int32(req.GetChannel()))
-	out := make([]*pb.TemplateInfo, len(templates))
-	for i, t := range templates {
-		out[i] = templateToProto(t)
+	out := make([]*pb.TemplateInfo, 0, len(templates))
+	for _, t := range templates {
+		if !visibleInTenant(scope, models.TenantKeyOf(t.TenantKey)) {
+			continue
+		}
+		out = append(out, templateToProto(t))
 	}
 	return &pb.ListTemplatesResponse{Templates: out}, nil
 }
@@ -500,8 +668,13 @@ func (s *Service) ListTemplates(ctx context.Context, req *pb.ListTemplatesReques
 // The policy belongs to the app's mapped tenant (phase ③ re-keying — unique
 // per (tenant_key, channel, scene)); its template and route references are
 // domain-checked: the platform pool plus the tenant's own private resources
-// only, cross-tenant references are a BadRequest.
+// only, cross-tenant references are a BadRequest. Under a scope the app
+// must map to the caller's tenant (foreign apps answer not-found).
 func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest) (*pb.CreatePolicyResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	channel, scene, err := sceneFromProto(req.GetScene())
 	if err != nil {
 		return nil, err
@@ -511,6 +684,9 @@ func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest)
 		return nil, xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetAppId()))
 	}
 	tenantKey := models.AppTenantKey(app)
+	if scope != "" && tenantKey != scope {
+		return nil, xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetAppId()))
+	}
 	if s.reg.Current().Policy(tenantKey, int32(channel), scene) != nil {
 		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("policy for tenant %q scene already exists", tenantKey))
 	}
@@ -548,9 +724,18 @@ func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest)
 
 // UpdatePolicy fully replaces template + route chains. Tenant / channel /
 // scene are immutable — delete and recreate to move a policy.
+// Ownership-checked after the row load.
 func (s *Service) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest) (*pb.UpdatePolicyResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	policy, err := dal.GetPolicy(ctx, s.db, req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageTenant(scope, s.policyTenant(policy),
+		xcodes.ErrPolicyNotFound.New(fmt.Sprintf("policy %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	tenantKey := s.policyTenant(policy)
@@ -579,8 +764,18 @@ func (s *Service) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest)
 }
 
 // DeletePolicy removes the binding; sends fail closed from then on.
+// Ownership-checked after the row load.
 func (s *Service) DeletePolicy(ctx context.Context, req *pb.DeletePolicyRequest) (*emptypb.Empty, error) {
-	if _, err := dal.GetPolicy(ctx, s.db, req.GetId()); err != nil {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := dal.GetPolicy(ctx, s.db, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeManageTenant(scope, s.policyTenant(policy),
+		xcodes.ErrPolicyNotFound.New(fmt.Sprintf("policy %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
 	if err := dal.DeletePolicy(ctx, s.db, req.GetId()); err != nil {
@@ -590,14 +785,23 @@ func (s *Service) DeletePolicy(ctx context.Context, req *pb.DeletePolicyRequest)
 	return &emptypb.Empty{}, nil
 }
 
-// ListPolicies filters by app (0 = all) and channel (0 = all).
+// ListPolicies filters by app (0 = all) and channel (0 = all), scoped to
+// the caller: the two-layer domain (shared leftovers + own rows) for an
+// injected key, everything for the cross-view.
 func (s *Service) ListPolicies(ctx context.Context, req *pb.ListPoliciesRequest) (*pb.ListPoliciesResponse, error) {
+	scope, err := scopeFromCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 	policies := s.reg.Current().Policies(req.GetAppId(), int32(req.GetChannel()))
-	out := make([]*pb.PolicyInfo, len(policies))
-	for i, p := range policies {
+	out := make([]*pb.PolicyInfo, 0, len(policies))
+	for _, p := range policies {
+		if !visibleInTenant(scope, s.policyTenant(p)) {
+			continue
+		}
 		routes, _ := send.ParseRoutes(p.Routes)
 		intlRoutes, _ := send.ParseRoutes(p.IntlRoutes)
-		out[i] = policyToProto(p, routesToProto(routes), routesToProto(intlRoutes))
+		out = append(out, policyToProto(p, routesToProto(routes), routesToProto(intlRoutes)))
 	}
 	return &pb.ListPoliciesResponse{Policies: out}, nil
 }

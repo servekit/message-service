@@ -109,7 +109,7 @@ func policyReq(appID, templateID, accountID, signatureID int64, scene pb.SmsScen
 // platform pool; both echo their ownership on the admin surface.
 func TestTenantPrivateResourceCRUD(t *testing.T) {
 	svc, db := newTenantAdminFixture(t)
-	ctx := context.Background()
+	ctx := platformCtx() // phase ④ T5: the admin surface requires a trusted identity
 
 	accResp, err := svc.CreateChannelAccount(ctx, &pb.CreateChannelAccountRequest{
 		Name: "alpha-private", Credentials: aliyunCreds(), TenantKey: "ten_alpha0000000",
@@ -143,7 +143,7 @@ func TestTenantPrivateResourceCRUD(t *testing.T) {
 // account, signature or template is a BadRequest.
 func TestTenantPolicyResourceDomain(t *testing.T) {
 	svc, db := newTenantAdminFixture(t)
-	ctx := context.Background()
+	ctx := platformCtx() // phase ④ T5: the admin surface requires a trusted identity
 
 	app := seedAppRow(t, db, 1001, "alpha-app", "ten_alpha0000000")
 	poolAcc := seedAccount(t, db, 2001, "pool-acc", nil)
@@ -190,7 +190,7 @@ func TestTenantPolicyResourceDomain(t *testing.T) {
 // message_apps — one config row per tenant.)
 func TestCreatePolicyDuplicateScopingByTenant(t *testing.T) {
 	svc, db := newTenantAdminFixture(t)
-	ctx := context.Background()
+	ctx := platformCtx() // phase ④ T5: the admin surface requires a trusted identity
 
 	alpha := seedAppRow(t, db, 1101, "alpha-1", "ten_alpha0000000")
 	beta := seedAppRow(t, db, 1103, "beta-1", "ten_beta0000000")
@@ -214,7 +214,7 @@ func TestCreatePolicyDuplicateScopingByTenant(t *testing.T) {
 // may bind platform-pool accounts but not another tenant's private account.
 func TestSignatureBindingCrossTenantAccountRejected(t *testing.T) {
 	svc, db := newTenantAdminFixture(t)
-	ctx := context.Background()
+	ctx := platformCtx() // phase ④ T5: the admin surface requires a trusted identity
 
 	poolAcc := seedAccount(t, db, 2201, "pool-acc3", nil)
 	betaAcc := seedAccount(t, db, 2202, "beta-acc2", models.TenantKeyPtr("ten_beta0000000"))
@@ -237,7 +237,7 @@ func TestSignatureBindingCrossTenantAccountRejected(t *testing.T) {
 // value; T10 总装 remaps).
 func TestCreateAppStampsTenantKey(t *testing.T) {
 	svc, _ := newTenantAdminFixture(t)
-	ctx := context.Background()
+	ctx := platformCtx() // phase ④ T5: the admin surface requires a trusted identity
 
 	resp, err := svc.CreateApp(ctx, &pb.CreateAppRequest{AppKey: "explicit-app", Name: "n", TenantKey: "ten_explicit0000"})
 	require.NoError(t, err)
@@ -257,7 +257,7 @@ func TestCreateAppStampsTenantKey(t *testing.T) {
 // an app-owned template stamps the app's mapped tenant.
 func TestCreateTemplateTenantScoped(t *testing.T) {
 	svc, db := newTenantAdminFixture(t)
-	ctx := context.Background()
+	ctx := platformCtx() // phase ④ T5: the admin surface requires a trusted identity
 
 	app := seedAppRow(t, db, 1201, "mapped-app", "ten_mapped000000")
 	require.NoError(t, svc.reg.Refresh(ctx))

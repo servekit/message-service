@@ -131,6 +131,16 @@ var ErrTemplateParamMissing = xerr.New(
 
 // --- admin resource errors ---
 
+// ErrUnauthorized indicates the admin surface was reached without any
+// trusted identity: no injected tenant key and no verified actor (phase ④
+// T5 closure — the internal-network-only window is closed).
+var ErrUnauthorized = xerr.New("UNAUTHORIZED", xerr.CategoryUnauthorized, 401, "management plane requires a trusted identity")
+
+// ErrForbidden indicates the caller's resolved scope may not perform the
+// operation (e.g. a tenant-scoped caller writing a platform-pool resource,
+// or a non-platform actor on a platform-only surface).
+var ErrForbidden = xerr.New("FORBIDDEN", xerr.CategoryForbidden, 403, "operation outside caller scope")
+
 // ErrAppNotFound indicates no app matches the requested ID.
 var ErrAppNotFound = xerr.New("APP_NOT_FOUND", xerr.CategoryNotFound, 404, "app not found")
 

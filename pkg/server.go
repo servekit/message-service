@@ -9,6 +9,7 @@ import (
 
 	"github.com/servekit/go-common/grpcx"
 	"github.com/servekit/go-common/signalx"
+	"github.com/servekit/go-common/tenantctx"
 
 	pb "github.com/servekit/api/gen/go/messaging/v1"
 	"github.com/servekit/message-service/internal/service"
@@ -80,6 +81,11 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 		grpcx.LoggingInterceptor,
 		grpcx.ErrorInterceptor,
 		grpcx.TrustedActorUnary(),
+		// Lift the trusted x-tenant-key (injected by the two doors) into the
+		// handler context — the management-plane scope input alongside the
+		// actor above (phase ④ T5). Module-mode callers already carry the
+		// ctx value; this covers the gRPC half.
+		tenantctx.TrustedTenantKeyUnary(),
 		protovalidate_middleware.UnaryServerInterceptor(validator),
 	)
 
