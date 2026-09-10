@@ -41,8 +41,11 @@ func CreateApp(ctx context.Context, tx *gorm.DB, record *models.MessageApp) erro
 // looked up UNSCOPED (by tenant_key, then the app_key-equal fallback
 // mirroring GetAppForTenant) and revived in place — deleted_at cleared,
 // tenant_key re-pointed — while its historic identity fields stay verbatim
-// (app_key/secret/name/daily limits are the operator's row). A LIVE
-// occupant (a racing replica's row) is left untouched.
+// (app_key/secret/name/daily limits are the operator's row). The lookup is
+// ordered live-first (③-review F2 corner): when a LIVE row and a
+// soft-deleted one both match the OR, the live one wins and the dead one
+// stays dead instead of being revived into a second claimant of the
+// tenant's unique keys.
 func EnsureTenantApp(ctx context.Context, tx *gorm.DB, record *models.MessageApp) error {
 	if err := gorm.G[models.MessageApp](tx, clause.OnConflict{
 		DoNothing: true,
@@ -53,6 +56,8 @@ func EnsureTenantApp(ctx context.Context, tx *gorm.DB, record *models.MessageApp
 	tk := models.TenantKeyOf(record.TenantKey)
 	var occupant models.MessageApp
 	err := tx.WithContext(ctx).Unscoped().
+		Order(clause.Expr{SQL: "deleted_at IS NULL DESC"}).
+		Order("id").
 		Where("tenant_key = ? OR app_key = ?", tk, record.AppKey).
 		Take(&occupant).Error
 	if err != nil {

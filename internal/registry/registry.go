@@ -49,11 +49,6 @@ type Snapshot struct {
 	emailProviders map[int64]provemail.AccountProvider
 }
 
-// App resolves an app by app_key; nil when unknown or soft-deleted.
-func (s *Snapshot) App(appKey string) *models.MessageApp {
-	return s.apps[appKey]
-}
-
 // AppByTenant resolves the tenant's config row by resolved tenant key
 // (tenant_key column, app_key literal fallback for un-backfilled rows);
 // nil when no app maps to the tenant.

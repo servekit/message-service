@@ -204,19 +204,15 @@ func (s *Service) Ping(_ context.Context) (*commonv1.Pong, error) {
 	}, nil
 }
 
-// resolveCaller classifies the caller's credential stack and resolves the
-// tenant context (dual-stack window, D-③1):
+// resolveCaller resolves the caller's tenant context from the trusted
+// x-tenant-key — the only credential stack since the ④ window close:
 //
-//   - trusted x-tenant-key (portal proxy): the tenant key IS the context;
-//     its config row is lazily upserted on first sight (tenantres);
-//   - legacy x-app-key/x-app-secret: the existing app validation, then the
-//     app converts to its mapped tenant_key (column empty → app_key
-//     literal; T10 总装 clears the empties);
-//   - neither: unauthenticated.
+//   - the key is format-validated and its config row lazily upserted on
+//     first sight (tenantres);
+//   - missing or malformed: unauthenticated.
 //
 // Works identically for gRPC (metadata arrives from the wire) and
-// module-mode (caller wrapped ctx via appauth.WithTenant / WithApp /
-// pkg.WithApp).
+// module-mode (caller wrapped ctx via tenantctx.WithTenant).
 func (s *Service) resolveCaller(ctx context.Context) (*tenantres.Caller, error) {
 	return s.tenants.Require(ctx)
 }

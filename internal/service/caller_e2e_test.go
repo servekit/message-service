@@ -1,11 +1,12 @@
-// Root-level data-plane wiring test: the dual-stack entry
+// Root-level data-plane wiring test: the credential entry
 // (Handler.SendSMS → service.Service → tenantres) resolves the tenant
-// context from metadata exactly per D-③1. Vendor dispatch is intentionally
-// left to fail with MESSAGE_SEND_FAILED ("no usable provider" — accounts
-// carry no real credentials): reaching that error proves the metadata was
-// parsed, the tenant resolved (config row lazily ensured on the trusted
-// path), and the policy found BY TENANT — a wiring break surfaces as
-// POLICY_NOT_FOUND or APP_UNAUTHORIZED instead.
+// context from the trusted x-tenant-key — the only stack since the ④
+// window close. Vendor dispatch is intentionally left to fail with
+// MESSAGE_SEND_FAILED ("no usable provider" — accounts carry no real
+// credentials): reaching that error proves the metadata was parsed, the
+// tenant resolved (config row lazily ensured), and the policy found BY
+// TENANT — a wiring break surfaces as POLICY_NOT_FOUND or
+// APP_UNAUTHORIZED instead.
 package service_test
 
 import (
@@ -13,17 +14,19 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/metadata"
+
 	pb "github.com/servekit/api/gen/go/messaging/v1"
 	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
 
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/redisx"
+	"github.com/servekit/go-common/tenantctx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/servekit/message-service/internal/appauth"
 	"github.com/servekit/message-service/internal/send"
 	"github.com/servekit/message-service/internal/store/dal"
 	"github.com/servekit/message-service/internal/store/models"
@@ -98,6 +101,14 @@ func seedPolicyFor(t *testing.T, db *gorm.DB, tenantKey string) {
 	}))
 }
 
+// legacyCtx plants the deleted stack's wire shape — anti-regression only.
+func legacyCtx(ctx context.Context, appKey, appSecret string) context.Context {
+	return metadata.NewIncomingContext(ctx, metadata.Pairs(
+		"x-app-key", appKey,
+		"x-app-secret", appSecret,
+	))
+}
+
 func e2eSendReq() *pb.SendSMSRequest {
 	return &pb.SendSMSRequest{
 		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
@@ -111,7 +122,7 @@ func TestSendSMSTrustedEndToEnd(t *testing.T) {
 	hdl, db := newRootHandler(t)
 	seedPolicyFor(t, db, "ten_e2etrusted00")
 
-	_, err := hdl.SendSMS(appauth.WithTenant(context.Background(), "ten_e2etrusted00"), e2eSendReq())
+	_, err := hdl.SendSMS(tenantctx.WithTenant(context.Background(), "ten_e2etrusted00"), e2eSendReq())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MESSAGE_SEND_FAILED", "dispatch reached: tenant + policy resolved, no usable provider is the expected terminal state")
 
@@ -121,9 +132,10 @@ func TestSendSMSTrustedEndToEnd(t *testing.T) {
 	assert.Equal(t, "ten_e2etrusted00", models.TenantKeyOf(app.TenantKey))
 }
 
-// TestSendSMSLegacyEndToEnd: the legacy ak/sk path validates and converts to
-// the app's mapped tenant_key.
-func TestSendSMSLegacyEndToEnd(t *testing.T) {
+// TestSendSMSLegacyRejected (④ window close): the legacy ak/sk stack no
+// longer authenticates — even a previously-valid pair (with a mapped config
+// row and policy seeded) answers APP_UNAUTHORIZED before any dispatch.
+func TestSendSMSLegacyRejected(t *testing.T) {
 	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	require.NoError(t, db.AutoMigrate(models.AllModels()...))
 	require.NoError(t, dal.CreateApp(context.Background(), db, &models.MessageApp{
@@ -133,13 +145,22 @@ func TestSendSMSLegacyEndToEnd(t *testing.T) {
 	seedPolicyFor(t, db, "ten_e2elegacy000")
 	hdl := newRootHandlerOn(t, db)
 
-	_, err := hdl.SendSMS(appauth.WithApp(context.Background(), "e2e-legacy", "e2e-secret"), e2eSendReq())
+	_, err := hdl.SendSMS(legacyCtx(context.Background(), "e2e-legacy", "e2e-secret"), e2eSendReq())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "MESSAGE_SEND_FAILED", "legacy credentials validated + policy found under the mapped tenant")
+	assert.Contains(t, err.Error(), "APP_UNAUTHORIZED", "a previously-valid legacy pair must now be unauthenticated")
 
-	_, err = hdl.SendSMS(appauth.WithApp(context.Background(), "e2e-legacy", "wrong"), e2eSendReq())
+	_, err = hdl.SendSMS(legacyCtx(context.Background(), "e2e-legacy", "wrong"), e2eSendReq())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "APP_UNAUTHORIZED")
+}
+
+// TestSendSMSMalformedTrustedKeyRejected (④ window close): a malformed
+// x-tenant-key answers APP_UNAUTHORIZED before any lookup.
+func TestSendSMSMalformedTrustedKeyRejected(t *testing.T) {
+	hdl, _ := newRootHandler(t)
+	_, err := hdl.SendSMS(tenantctx.WithTenant(context.Background(), "e2e-legacy"), e2eSendReq())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "APP_UNAUTHORIZED", "a legacy app_key literal must not pass as a trusted key")
 }
 
 // TestSendSMSTrustedBeatsSmuggledLegacy: trusted key + a VALID legacy pair of
@@ -155,8 +176,8 @@ func TestSendSMSTrustedBeatsSmuggledLegacy(t *testing.T) {
 	seedPolicyFor(t, db, "ten_e2etrusted00")
 	hdl := newRootHandlerOn(t, db)
 
-	ctx := appauth.WithTenant(
-		appauth.WithApp(context.Background(), "e2e-other", "other-secret"),
+	ctx := tenantctx.WithTenant(
+		legacyCtx(context.Background(), "e2e-other", "other-secret"),
 		"ten_e2etrusted00")
 	_, err := hdl.SendSMS(ctx, e2eSendReq())
 	require.Error(t, err)
