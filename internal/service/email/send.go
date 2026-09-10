@@ -21,35 +21,44 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-// SendEmail sends a policy-driven email: resolves (app, EMAIL, scene) →
+// SendEmail sends a policy-driven email: resolves (tenant, EMAIL, scene) →
 // policy → template + ordered provider routes, renders subject/body from
 // the template with {{param}} substitution, and sends along the route chain
-// with fallback. Idempotent on (app_key, idempotency_key) via Redis.
-func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
+// with fallback. Idempotent on (tenant_key, idempotency_key) via Redis.
+//
+// Phase ③: tenantKey is the caller's resolved tenant context (tenantres);
+// app is its config row (daily limits, audit labels).
+func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, tenantKey string, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
 	if err := validateSendEmailRequest(req); err != nil {
 		return nil, xcodes.ErrBadRequest.Wrap(err)
 	}
 
 	snap := s.reg.Current()
-	policy := snap.Policy(app.ID, int32(pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL), int32(req.GetScene()))
+	policy := snap.Policy(tenantKey, int32(pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL), int32(req.GetScene()))
 	if policy == nil {
 		return nil, xcodes.ErrPolicyNotFound.New(fmt.Sprintf(
-			"no email policy for app %q scene %s; configured scenes: %s",
-			app.AppKey, req.GetScene(), sceneList(snap, app.ID, pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL)))
+			"no email policy for tenant %q scene %s; configured scenes: %s",
+			tenantKey, req.GetScene(), sceneList(snap, tenantKey, pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL)))
 	}
 
-	// Daily quota (attempts counted). Runs before the idempotency
-	// reservation so rejected sends never consume the reservation.
-	if err := s.quota.Allow(ctx, app.AppKey, "email", app.EmailDailyLimit); err != nil {
+	// Daily quota (attempts counted), namespaced by tenant_key (③ re-keying;
+	// for backfilled apps tenant_key == app_key so the counters carry over).
+	// Runs before the idempotency reservation so rejected sends never
+	// consume the reservation.
+	if err := s.quota.Allow(ctx, tenantKey, "email", app.EmailDailyLimit); err != nil {
 		return nil, err
 	}
 
-	// Idempotency reservation (Redis-backed). Always runs regardless of
-	// persistence toggle — Redis is the single source of dedup truth.
+	// Idempotency reservation (Redis-backed), namespaced by tenant_key —
+	// ③ re-keying: a key replayed under a different tenant is a fresh
+	// namespace (in-flight reservations under a pre-remap app_key are not
+	// visible after T10 remaps the column; the TTL bounds the window).
+	// Always runs regardless of persistence toggle — Redis is the single
+	// source of dedup truth.
 	var idemKey string
 	if k := req.GetIdempotencyKey(); k != "" {
 		idemKey = k
-		acquired, payload, err := s.idem.Reserve(ctx, "email", app.AppKey, k)
+		acquired, payload, err := s.idem.Reserve(ctx, "email", tenantKey, k)
 		if err != nil {
 			return nil, xcodes.ErrInternal.Wrap(err)
 		}
@@ -68,7 +77,7 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 		if idemKey == "" {
 			return
 		}
-		if releaseErr := s.idem.Release(context.Background(), "email", app.AppKey, idemKey); releaseErr != nil {
+		if releaseErr := s.idem.Release(context.Background(), "email", tenantKey, idemKey); releaseErr != nil {
 			slog.Error("idempotency release after "+reason, "key", idemKey, "error", releaseErr)
 		}
 	}
@@ -206,7 +215,7 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 		payload, err := protojson.Marshal(resp)
 		if err != nil {
 			slog.Error("idempotency marshal", "key", idemKey, "error", err)
-		} else if err := s.idem.Complete(context.Background(), "email", app.AppKey, idemKey, payload); err != nil {
+		} else if err := s.idem.Complete(context.Background(), "email", tenantKey, idemKey, payload); err != nil {
 			slog.Error("idempotency complete", "key", idemKey, "error", err)
 		}
 	}
@@ -221,8 +230,8 @@ func (s *Service) SendEmail(ctx context.Context, app *models.MessageApp, req *pb
 }
 
 // sceneList renders configured scene values for the POLICY_NOT_FOUND error.
-func sceneList(snap *registry.Snapshot, appID int64, channel pb.TemplateChannel) string {
-	scenes := snap.AppScenes(appID, int32(channel))
+func sceneList(snap *registry.Snapshot, tenantKey string, channel pb.TemplateChannel) string {
+	scenes := snap.AppScenes(tenantKey, int32(channel))
 	if len(scenes) == 0 {
 		return "(none)"
 	}

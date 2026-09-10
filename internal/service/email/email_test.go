@@ -183,13 +183,17 @@ func sendReq(params map[string]string) *pb.SendEmailRequest {
 	}
 }
 
+// tenant is the fixture app's resolved tenant context (stamped column,
+// app_key literal fallback — mirrors what tenantres hands the send path).
+func (f *fixture) tenant() string { return models.AppTenantKey(f.app) }
+
 // --- tests ---
 
 func TestSendEmailPolicyDriven(t *testing.T) {
 	ok := &mockEmailProvider{name: "primary"}
 	fx := newFixture(t, ok)
 
-	resp, err := fx.svc.SendEmail(context.Background(), fx.app, sendReq(map[string]string{"code": "424242"}))
+	resp, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), sendReq(map[string]string{"code": "424242"}))
 	require.NoError(t, err)
 	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp.GetStatus())
 	assert.Equal(t, pb.EmailVendor_EMAIL_VENDOR_ALIYUN, resp.GetEmailVendor())
@@ -212,7 +216,7 @@ func TestSendEmailPolicyDriven(t *testing.T) {
 
 func TestSendEmailPolicyNotFound(t *testing.T) {
 	fx := newFixture(t, &mockEmailProvider{name: "p"})
-	_, err := fx.svc.SendEmail(context.Background(), fx.app, &pb.SendEmailRequest{
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), &pb.SendEmailRequest{
 		To:             []*pb.EmailAddress{{Email: "to@example.com"}},
 		Scene:          pb.EmailScene_EMAIL_SCENE_REGISTER, // no policy configured
 		TemplateParams: map[string]string{"code": "1"},
@@ -224,7 +228,7 @@ func TestSendEmailPolicyNotFound(t *testing.T) {
 
 func TestSendEmailMissingRequiredParam(t *testing.T) {
 	fx := newFixture(t, &mockEmailProvider{name: "p"})
-	_, err := fx.svc.SendEmail(context.Background(), fx.app, sendReq(map[string]string{}))
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), sendReq(map[string]string{}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TEMPLATE_PARAM_MISSING")
 	assert.Zero(t, fx.providers[0].calls, "provider must not be called on param validation failure")
@@ -235,7 +239,7 @@ func TestSendEmailFallback(t *testing.T) {
 	secondary := &mockEmailProvider{name: "secondary"}
 	fx := newFixture(t, primary, secondary)
 
-	resp, err := fx.svc.SendEmail(context.Background(), fx.app, sendReq(map[string]string{"code": "1"}))
+	resp, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), sendReq(map[string]string{"code": "1"}))
 	require.NoError(t, err)
 	assert.Equal(t, pb.MessageStatus_MESSAGE_STATUS_SENT, resp.GetStatus())
 	assert.Equal(t, 1, primary.calls)
@@ -247,7 +251,7 @@ func TestSendEmailAllProvidersFail(t *testing.T) {
 		&mockEmailProvider{name: "a", err: errors.New("x")},
 		&mockEmailProvider{name: "b", err: errors.New("y")},
 	)
-	_, err := fx.svc.SendEmail(context.Background(), fx.app, sendReq(map[string]string{"code": "1"}))
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), sendReq(map[string]string{"code": "1"}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MESSAGE_SEND_FAILED")
 
@@ -266,9 +270,9 @@ func TestSendEmailIdempotency(t *testing.T) {
 	req := sendReq(map[string]string{"code": "9"})
 	req.IdempotencyKey = "idem-1"
 
-	first, err := fx.svc.SendEmail(context.Background(), fx.app, req)
+	first, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), req)
 	require.NoError(t, err)
-	second, err := fx.svc.SendEmail(context.Background(), fx.app, req)
+	second, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), req)
 	require.NoError(t, err)
 	assert.Equal(t, first.GetId(), second.GetId(), "replay returns the cached response")
 	assert.Equal(t, 1, ok.calls, "provider must be called exactly once")
@@ -279,10 +283,10 @@ func TestQuotaEnforced(t *testing.T) {
 	fx := newFixture(t, ok)
 	fx.app.EmailDailyLimit = 1
 
-	_, err := fx.svc.SendEmail(context.Background(), fx.app, sendReq(map[string]string{"code": "1"}))
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), sendReq(map[string]string{"code": "1"}))
 	require.NoError(t, err)
 
-	_, err = fx.svc.SendEmail(context.Background(), fx.app, sendReq(map[string]string{"code": "2"}))
+	_, err = fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), sendReq(map[string]string{"code": "2"}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DAILY_QUOTA_EXCEEDED")
 	assert.Equal(t, 1, ok.calls)
@@ -305,7 +309,7 @@ func TestSendEmailFreeFormContentWithParams(t *testing.T) {
 	ok := &mockEmailProvider{name: "p"}
 	fx := newFixture(t, ok)
 
-	_, err := fx.svc.SendEmail(context.Background(), fx.app, &pb.SendEmailRequest{
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), &pb.SendEmailRequest{
 		To:    []*pb.EmailAddress{{Email: "to@example.com"}},
 		Scene: pb.EmailScene_EMAIL_SCENE_LOGIN_CODE,
 		// free-form content wins over the template; {{param}} still rendered
@@ -331,7 +335,7 @@ func TestSendEmailFreeFormContentWithParams(t *testing.T) {
 
 func TestSendEmailFreeFormRequiresBody(t *testing.T) {
 	fx := newFixture(t, &mockEmailProvider{name: "p"})
-	_, err := fx.svc.SendEmail(context.Background(), fx.app, &pb.SendEmailRequest{
+	_, err := fx.svc.SendEmail(context.Background(), fx.app, fx.tenant(), &pb.SendEmailRequest{
 		To:      []*pb.EmailAddress{{Email: "to@example.com"}},
 		Scene:   pb.EmailScene_EMAIL_SCENE_LOGIN_CODE,
 		Subject: "subject without body",

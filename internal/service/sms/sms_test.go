@@ -167,11 +167,15 @@ func newSMSFixture(t *testing.T) *smsFixture {
 	}
 }
 
+// tenant is the fixture app's resolved tenant context (stamped column,
+// app_key literal fallback — mirrors what tenantres hands the send path).
+func (f *smsFixture) tenant() string { return models.AppTenantKey(f.app) }
+
 // --- tests ---
 
 func TestSendSMSCNUsesVendorCodeAndSignature(t *testing.T) {
 	fx := newSMSFixture(t)
-	resp, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	resp, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To:             "+8613800138000",
 		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "998877"},
@@ -212,7 +216,7 @@ func TestSendSMSCNFallbackAcrossVendors(t *testing.T) {
 	// heavier weight on aliyun so the chain starts there deterministically
 	// is not needed: with aliyun failing, tencent must be reached regardless
 	// of start choice — run until aliyun was tried and tencent succeeded.
-	resp, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	resp, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To:             "+8613800138000",
 		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "1"},
@@ -227,7 +231,7 @@ func TestSendSMSIntlChain(t *testing.T) {
 	fx := newSMSFixture(t)
 	// intl route vendors take the intl path; vendor-code template gives each
 	// its code via SendInternational
-	resp, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	resp, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To:             "+14155550123",
 		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "7"},
@@ -246,7 +250,7 @@ func TestSendSMSIntlChain(t *testing.T) {
 
 func TestSendSMSPolicyNotFound(t *testing.T) {
 	fx := newSMSFixture(t)
-	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_REGISTER,
 		TemplateParams: map[string]string{"code": "1"},
 	})
@@ -256,7 +260,7 @@ func TestSendSMSPolicyNotFound(t *testing.T) {
 
 func TestSendSMSMissingParam(t *testing.T) {
 	fx := newSMSFixture(t)
-	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 	})
 	require.Error(t, err)
@@ -266,7 +270,7 @@ func TestSendSMSMissingParam(t *testing.T) {
 
 func TestSendSMSInvalidPhone(t *testing.T) {
 	fx := newSMSFixture(t)
-	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To:             "+86101234567", // Beijing landline — not SMS-capable
 		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "1"},
@@ -281,9 +285,9 @@ func TestSendSMSIdempotency(t *testing.T) {
 		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "3"}, IdempotencyKey: "sms-idem-1",
 	}
-	first, err := fx.svc.SendSMS(context.Background(), fx.app, req)
+	first, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), req)
 	require.NoError(t, err)
-	second, err := fx.svc.SendSMS(context.Background(), fx.app, req)
+	second, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), req)
 	require.NoError(t, err)
 	assert.Equal(t, first.GetId(), second.GetId())
 	assert.Equal(t, 1, fx.aliyun.calls+fx.tencent.calls)
@@ -292,12 +296,12 @@ func TestSendSMSIdempotency(t *testing.T) {
 func TestSendSMSQuota(t *testing.T) {
 	fx := newSMSFixture(t)
 	fx.app.SMSDailyLimit = 1
-	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To: "+8613800138000", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "1"},
 	})
 	require.NoError(t, err)
-	_, err = fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err = fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To: "+8613800138001", Scene: pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		TemplateParams: map[string]string{"code": "2"},
 	})
@@ -307,7 +311,7 @@ func TestSendSMSQuota(t *testing.T) {
 
 func TestSendSMSIntlFreeFormContent(t *testing.T) {
 	fx := newSMSFixture(t)
-	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To:             "+14155550123",
 		Scene:          pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		Content:        "Hi {{nickname}}, code {{code}}",
@@ -337,7 +341,7 @@ func TestSendSMSIntlFreeFormContent(t *testing.T) {
 
 func TestSendSMSFreeFormRejectedForCN(t *testing.T) {
 	fx := newSMSFixture(t)
-	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To:      "+8613800138000",
 		Scene:   pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		Content: "free text to a CN number",
@@ -350,7 +354,7 @@ func TestSendSMSIntlFreeFormWithoutParams(t *testing.T) {
 	fx := newSMSFixture(t)
 	// free content, NO template params at all — must not trip the
 	// required-param ("code") enforcement
-	_, err := fx.svc.SendSMS(context.Background(), fx.app, &pb.SendSMSRequest{
+	_, err := fx.svc.SendSMS(context.Background(), fx.app, fx.tenant(), &pb.SendSMSRequest{
 		To:      "+14155550124",
 		Scene:   pb.SmsScene_SMS_SCENE_LOGIN_CODE,
 		Content: "plain free text, no placeholders",

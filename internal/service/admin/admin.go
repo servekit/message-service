@@ -56,7 +56,9 @@ func (s *Service) nextID(ctx context.Context) (int64, error) {
 // --- Apps ---
 
 // CreateApp registers a calling app and returns the plaintext app_secret
-// exactly once.
+// exactly once. The app is stamped with its tenant mapping: an explicit
+// tenant_key when given, else the app_key literal (the legacy→tenant
+// fallback value; T10 总装 remaps).
 func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.CreateAppResponse, error) {
 	appKey := req.GetAppKey()
 	if appKey == "" {
@@ -75,6 +77,14 @@ func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.
 	} else if _, err := dal.GetAppByKey(ctx, s.db, appKey); err == nil {
 		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("app_key %q already exists", appKey))
 	}
+	tenantKey := req.GetTenantKey()
+	if tenantKey == "" {
+		tenantKey = appKey
+	}
+	if app := s.reg.Current().AppByTenant(tenantKey); app != nil {
+		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf(
+			"tenant_key %q already mapped to app %q", tenantKey, app.AppKey))
+	}
 	secret, err := mintSecret()
 	if err != nil {
 		return nil, xcodes.ErrInternal.Wrap(err)
@@ -86,6 +96,7 @@ func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.
 	app := &models.MessageApp{
 		ID:              id,
 		AppKey:          appKey,
+		TenantKey:       models.TenantKeyPtr(tenantKey),
 		AppSecret:       secret,
 		Name:            req.GetName(),
 		SMSDailyLimit:   req.GetSmsDailyLimit(),
@@ -175,7 +186,9 @@ func (s *Service) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*emp
 
 // --- Channel accounts ---
 
-// CreateChannelAccount adds a vendor account to the platform pool.
+// CreateChannelAccount adds a vendor account to the pool: the platform
+// pool when tenant_key is absent, tenant-private when set (phase ③
+// resource domain — a NULL tenant_key stays usable by every tenant).
 func (s *Service) CreateChannelAccount(ctx context.Context, req *pb.CreateChannelAccountRequest) (*pb.CreateChannelAccountResponse, error) {
 	ac, vendor, channel, err := credentialsToModel(req.GetName(), req.GetCredentials())
 	if err != nil {
@@ -186,12 +199,13 @@ func (s *Service) CreateChannelAccount(ctx context.Context, req *pb.CreateChanne
 		return nil, xcodes.ErrInternal.Wrap(err)
 	}
 	account := &models.MessageChannelAccount{
-		ID:      id,
-		Channel: int32(channel),
-		Vendor:  vendor,
-		Name:    req.GetName(),
-		Remark:  req.GetRemark(),
-		Config:  ac,
+		ID:        id,
+		Channel:   int32(channel),
+		Vendor:    vendor,
+		Name:      req.GetName(),
+		Remark:    req.GetRemark(),
+		Config:    ac,
+		TenantKey: models.TenantKeyPtr(req.GetTenantKey()),
 	}
 	if err := dal.CreateChannelAccount(ctx, s.db, account); err != nil {
 		return nil, err
@@ -256,10 +270,11 @@ func (s *Service) ListChannelAccounts(ctx context.Context, _ *pb.ListChannelAcco
 // (list must stay usable for triage).
 func (s *Service) accountToProto(_ context.Context, a *models.MessageChannelAccount) *pb.ChannelAccountInfo {
 	info := &pb.ChannelAccountInfo{
-		Id:       a.ID,
-		Name:     a.Name,
-		Disabled: a.Disabled,
-		Remark:   a.Remark,
+		Id:        a.ID,
+		Name:      a.Name,
+		Disabled:  a.Disabled,
+		Remark:    a.Remark,
+		TenantKey: models.TenantKeyOf(a.TenantKey),
 		// created_at/updated_at filled below
 	}
 	if !a.CreatedAt.IsZero() {
@@ -287,16 +302,21 @@ func (s *Service) accountToProto(_ context.Context, a *models.MessageChannelAcco
 
 // --- Signatures ---
 
-// CreateSignature registers a signature with its account bindings.
+// CreateSignature registers a signature with its account bindings:
+// platform pool when tenant_key is absent, tenant-private when set.
 func (s *Service) CreateSignature(ctx context.Context, req *pb.CreateSignatureRequest) (*pb.CreateSignatureResponse, error) {
-	if err := s.validateBindingAccounts(ctx, req.GetAccountIds()); err != nil {
+	tenantKey := req.GetTenantKey()
+	if err := s.validateBindingAccounts(ctx, tenantKey, req.GetAccountIds()); err != nil {
 		return nil, err
 	}
 	id, err := s.nextID(ctx)
 	if err != nil {
 		return nil, xcodes.ErrInternal.Wrap(err)
 	}
-	sig := &models.MessageSignature{ID: id, Name: req.GetName(), Remark: req.GetRemark()}
+	sig := &models.MessageSignature{
+		ID: id, Name: req.GetName(), Remark: req.GetRemark(),
+		TenantKey: models.TenantKeyPtr(req.GetTenantKey()),
+	}
 	if err := dal.CreateSignature(ctx, s.db, sig, req.GetAccountIds()); err != nil {
 		return nil, err
 	}
@@ -319,7 +339,7 @@ func (s *Service) UpdateSignature(ctx context.Context, req *pb.UpdateSignatureRe
 	accounts := s.reg.Current().SignatureAccounts(sig.ID)
 	if req.GetAccountIds() != nil {
 		accounts = req.GetAccountIds().GetIds()
-		if err := s.validateBindingAccounts(ctx, accounts); err != nil {
+		if err := s.validateBindingAccounts(ctx, models.TenantKeyOf(sig.TenantKey), accounts); err != nil {
 			return nil, err
 		}
 	}
@@ -352,9 +372,12 @@ func (s *Service) ListSignatures(ctx context.Context, _ *pb.ListSignaturesReques
 	return &pb.ListSignaturesResponse{Signatures: out}, nil
 }
 
-// validateBindingAccounts checks every bound account exists and is an SMS
-// channel account (signatures are SMS-only concepts).
-func (s *Service) validateBindingAccounts(ctx context.Context, accountIDs []int64) error {
+// validateBindingAccounts checks every bound account exists, is an SMS
+// channel account (signatures are SMS-only concepts), and stays inside the
+// signature's resource domain: the platform pool (tenant_key NULL) or the
+// signature's own tenant (phase ③ — binding another tenant's private
+// account is a cross-tenant reference).
+func (s *Service) validateBindingAccounts(ctx context.Context, tenantKey string, accountIDs []int64) error {
 	snap := s.reg.Current()
 	for _, id := range accountIDs {
 		account := snap.ChannelAccount(id)
@@ -364,18 +387,41 @@ func (s *Service) validateBindingAccounts(ctx context.Context, accountIDs []int6
 		if pb.TemplateChannel(account.Channel) != pb.TemplateChannel_TEMPLATE_CHANNEL_SMS {
 			return xcodes.ErrBadRequest.New(fmt.Sprintf("account %d (%s) is not an SMS account", id, account.Name))
 		}
+		if err := checkResourceDomain("account", id, account.Name, account.TenantKey, tenantKey); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
+// checkResourceDomain enforces the phase ③ resource-domain rule for a
+// referenced resource: its tenant_key must be NULL (platform pool / shared)
+// or equal the referencing tenant's key. Anything else is a cross-tenant
+// reference → BadRequest.
+func checkResourceDomain(kind string, id int64, name string, resourceTenant *string, tenantKey string) error {
+	owner := models.TenantKeyOf(resourceTenant)
+	if owner == "" || owner == tenantKey {
+		return nil
+	}
+	return xcodes.ErrBadRequest.New(fmt.Sprintf(
+		"%s %d (%s) belongs to tenant %q — cross-tenant reference rejected", kind, id, name, owner))
+}
+
 // --- Templates ---
 
-// CreateTemplate registers a template definition.
+// CreateTemplate registers a template definition. app_id 0 = shared
+// (tenant_key NULL); otherwise the template is stamped with the app's
+// mapped tenant (the app must exist — the tenant is derived from it).
 func (s *Service) CreateTemplate(ctx context.Context, req *pb.CreateTemplateRequest) (*pb.CreateTemplateResponse, error) {
+	tenantKey, err := s.templateTenant(req.GetAppId())
+	if err != nil {
+		return nil, err
+	}
 	t, err := templateToModel(req.GetTemplate(), req.GetAppId())
 	if err != nil {
 		return nil, err
 	}
+	t.TenantKey = models.TenantKeyPtr(tenantKey)
 	if req.GetTemplate().GetName() != "" {
 		t.Name = req.GetTemplate().GetName()
 	}
@@ -391,7 +437,22 @@ func (s *Service) CreateTemplate(ctx context.Context, req *pb.CreateTemplateRequ
 	return &pb.CreateTemplateResponse{Template: templateToProto(t)}, nil
 }
 
-// UpdateTemplate fully replaces a template definition.
+// templateTenant resolves the owning tenant for a template scoped to
+// appID: "" (shared) for app_id 0, the app's mapped tenant otherwise.
+// Unknown apps are refused — the tenant cannot be derived.
+func (s *Service) templateTenant(appID int64) (string, error) {
+	if appID == 0 {
+		return "", nil
+	}
+	app := s.reg.Current().AppByID(appID)
+	if app == nil {
+		return "", xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", appID))
+	}
+	return models.AppTenantKey(app), nil
+}
+
+// UpdateTemplate fully replaces a template definition. Ownership (app_id /
+// tenant_key) is immutable.
 func (s *Service) UpdateTemplate(ctx context.Context, req *pb.UpdateTemplateRequest) (*pb.UpdateTemplateResponse, error) {
 	existing, err := dal.GetTemplate(ctx, s.db, req.GetId())
 	if err != nil {
@@ -403,6 +464,7 @@ func (s *Service) UpdateTemplate(ctx context.Context, req *pb.UpdateTemplateRequ
 	}
 	t.ID = existing.ID
 	t.AppID = existing.AppID
+	t.TenantKey = existing.TenantKey
 	if err := dal.UpdateTemplate(ctx, s.db, t); err != nil {
 		return nil, err
 	}
@@ -434,7 +496,11 @@ func (s *Service) ListTemplates(ctx context.Context, req *pb.ListTemplatesReques
 
 // --- Policies ---
 
-// CreatePolicy binds (app, channel, scene) to a template + route chains.
+// CreatePolicy binds (tenant, channel, scene) to a template + route chains.
+// The policy belongs to the app's mapped tenant (phase ③ re-keying — unique
+// per (tenant_key, channel, scene)); its template and route references are
+// domain-checked: the platform pool plus the tenant's own private resources
+// only, cross-tenant references are a BadRequest.
 func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest) (*pb.CreatePolicyResponse, error) {
 	channel, scene, err := sceneFromProto(req.GetScene())
 	if err != nil {
@@ -444,10 +510,11 @@ func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest)
 	if app == nil {
 		return nil, xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetAppId()))
 	}
-	if s.reg.Current().Policy(req.GetAppId(), int32(channel), scene) != nil {
-		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("policy for app %q scene already exists", app.AppKey))
+	tenantKey := models.AppTenantKey(app)
+	if s.reg.Current().Policy(tenantKey, int32(channel), scene) != nil {
+		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("policy for tenant %q scene already exists", tenantKey))
 	}
-	if err := s.validatePolicy(ctx, channel, req.GetTemplateId(), req.GetRoutes(), req.GetIntlRoutes()); err != nil {
+	if err := s.validatePolicy(ctx, channel, tenantKey, req.GetTemplateId(), req.GetRoutes(), req.GetIntlRoutes()); err != nil {
 		return nil, err
 	}
 	id, err := s.nextID(ctx)
@@ -465,6 +532,7 @@ func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest)
 	policy := &models.MessagePolicy{
 		ID:         id,
 		AppID:      req.GetAppId(),
+		TenantKey:  models.TenantKeyPtr(tenantKey),
 		Channel:    int32(channel),
 		Scene:      scene,
 		TemplateID: req.GetTemplateId(),
@@ -478,13 +546,15 @@ func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest)
 	return &pb.CreatePolicyResponse{Policy: policyToProto(policy, req.GetRoutes(), req.GetIntlRoutes())}, nil
 }
 
-// UpdatePolicy fully replaces template + route chains.
+// UpdatePolicy fully replaces template + route chains. Tenant / channel /
+// scene are immutable — delete and recreate to move a policy.
 func (s *Service) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest) (*pb.UpdatePolicyResponse, error) {
 	policy, err := dal.GetPolicy(ctx, s.db, req.GetId())
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validatePolicy(ctx, pb.TemplateChannel(policy.Channel), req.GetTemplateId(), req.GetRoutes(), req.GetIntlRoutes()); err != nil {
+	tenantKey := s.policyTenant(policy)
+	if err := s.validatePolicy(ctx, pb.TemplateChannel(policy.Channel), tenantKey, req.GetTemplateId(), req.GetRoutes(), req.GetIntlRoutes()); err != nil {
 		return nil, err
 	}
 	routes, err := send.MarshalRoutes(routesFromProto(req.GetRoutes()))
@@ -532,10 +602,24 @@ func (s *Service) ListPolicies(ctx context.Context, req *pb.ListPoliciesRequest)
 	return &pb.ListPoliciesResponse{Policies: out}, nil
 }
 
-// validatePolicy checks: template exists with matching channel; every
-// route account exists, is enabled, and matches the channel; SMS routes
-// carry a signature bound to that account; email routes carry none.
-func (s *Service) validatePolicy(ctx context.Context, channel pb.TemplateChannel, templateID int64, routes, intlRoutes []*pb.RouteRule) error {
+// policyTenant resolves a stored policy's tenant (the backfilled column,
+// else the app mapping — same chain as the registry load).
+func (s *Service) policyTenant(p *models.MessagePolicy) string {
+	if tk := models.TenantKeyOf(p.TenantKey); tk != "" {
+		return tk
+	}
+	return models.AppTenantKey(s.reg.Current().AppByID(p.AppID))
+}
+
+// validatePolicy checks: template exists with matching channel and stays in
+// the tenant's resource domain; every route account exists, is enabled,
+// matches the channel, and stays in the domain; SMS routes carry a signature
+// bound to that account (and in the domain); email routes carry none.
+// Domain rule (phase ③): tenant_key NULL (platform pool / shared) or equal
+// to tenantKey; anything else is cross-tenant → BadRequest. An empty
+// tenantKey (unresolvable, pre-③ dangling row) skips the domain check —
+// the platform editing its own leftovers.
+func (s *Service) validatePolicy(ctx context.Context, channel pb.TemplateChannel, tenantKey string, templateID int64, routes, intlRoutes []*pb.RouteRule) error {
 	snap := s.reg.Current()
 	t := snap.Template(templateID)
 	if t == nil || t.Disabled {
@@ -544,6 +628,9 @@ func (s *Service) validatePolicy(ctx context.Context, channel pb.TemplateChannel
 	if pb.TemplateChannel(t.Channel) != channel {
 		return xcodes.ErrBadRequest.New(fmt.Sprintf("template %d channel %s does not match policy channel %s",
 			templateID, pb.TemplateChannel(t.Channel), channel))
+	}
+	if err := checkResourceDomain("template", t.ID, t.Name, t.TenantKey, tenantKey); err != nil {
+		return err
 	}
 	if channel == pb.TemplateChannel_TEMPLATE_CHANNEL_SMS && len(intlRoutes) == 0 {
 		// Allowed: policy rejects intl destinations at send time. Recorded
@@ -559,6 +646,9 @@ func (s *Service) validatePolicy(ctx context.Context, channel pb.TemplateChannel
 			if pb.TemplateChannel(account.Channel) != channel {
 				return xcodes.ErrBadRequest.New(fmt.Sprintf("route account %d (%s) channel mismatch", r.GetAccountId(), account.Name))
 			}
+			if err := checkResourceDomain("account", account.ID, account.Name, account.TenantKey, tenantKey); err != nil {
+				return err
+			}
 			if channel == pb.TemplateChannel_TEMPLATE_CHANNEL_SMS {
 				if r.GetSignatureId() == 0 {
 					return xcodes.ErrBadRequest.New("sms routes require a signature")
@@ -566,6 +656,9 @@ func (s *Service) validatePolicy(ctx context.Context, channel pb.TemplateChannel
 				sig := snap.Signature(r.GetSignatureId())
 				if sig == nil || sig.Disabled {
 					return xcodes.ErrSignatureNotFound.New(fmt.Sprintf("route signature %d not found or disabled", r.GetSignatureId()))
+				}
+				if err := checkResourceDomain("signature", sig.ID, sig.Name, sig.TenantKey, tenantKey); err != nil {
+					return err
 				}
 				if !snap.SignatureBound(r.GetSignatureId(), r.GetAccountId()) {
 					return xcodes.ErrSignatureNotBound.New(fmt.Sprintf(
@@ -592,6 +685,7 @@ func appToProto(a *models.MessageApp) *pb.MessageAppInfo {
 		AppSecret:       a.AppSecret,
 		Name:            a.Name,
 		Disabled:        a.Disabled,
+		TenantKey:       models.TenantKeyOf(a.TenantKey),
 		SmsDailyLimit:   a.SMSDailyLimit,
 		EmailDailyLimit: a.EmailDailyLimit,
 	}
@@ -611,6 +705,7 @@ func (s *Service) signatureToProto(sig *models.MessageSignature, accountIDs []in
 		Disabled:   sig.Disabled,
 		Remark:     sig.Remark,
 		AccountIds: accountIDs,
+		TenantKey:  models.TenantKeyOf(sig.TenantKey),
 	}
 	if !sig.CreatedAt.IsZero() {
 		info.CreatedAt = sig.CreatedAt.Unix()
@@ -660,6 +755,7 @@ func policyToProto(p *models.MessagePolicy, routes, intlRoutes []*pb.RouteRule) 
 	info := &pb.PolicyInfo{
 		Id:         p.ID,
 		AppId:      p.AppID,
+		TenantKey:  models.TenantKeyOf(p.TenantKey),
 		Channel:    pb.TemplateChannel(p.Channel),
 		TemplateId: p.TemplateID,
 		Routes:     routes,
@@ -727,12 +823,13 @@ func templateToModel(t *pb.TemplateInfo, appID int64) (*models.MessageTemplate, 
 
 func templateToProto(t *models.MessageTemplate) *pb.TemplateInfo {
 	info := &pb.TemplateInfo{
-		Id:       t.ID,
-		AppId:    t.AppID,
-		Name:     t.Name,
-		Channel:  pb.TemplateChannel(t.Channel),
-		Kind:     pb.TemplateKind(t.Kind),
-		Disabled: t.Disabled,
+		Id:        t.ID,
+		AppId:     t.AppID,
+		Name:      t.Name,
+		Channel:   pb.TemplateChannel(t.Channel),
+		Kind:      pb.TemplateKind(t.Kind),
+		Disabled:  t.Disabled,
+		TenantKey: models.TenantKeyOf(t.TenantKey),
 	}
 	specs, _ := send.ParseParamSpecs(t.Params)
 	info.Params = paramSpecsToProto(specs)

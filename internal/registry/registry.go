@@ -23,20 +23,24 @@ import (
 	"gorm.io/gorm"
 )
 
-// policyKey indexes policies by (app, channel, scene).
-func policyKey(appID int64, channel, scene int32) string {
-	return fmt.Sprintf("%d:%d:%d", appID, channel, scene)
+// policyKey indexes policies by (tenant, channel, scene). Phase ③: the
+// policy key moved from app_id to tenant_key — sends resolve the caller's
+// tenant once (tenantres) and look the policy up through it.
+func policyKey(tenantKey string, channel, scene int32) string {
+	return fmt.Sprintf("%s:%d:%d", tenantKey, channel, scene)
 }
 
 // Snapshot is an immutable point-in-time view of the platform resources.
 // Readers grab it once per request via Registry.Current().
 type Snapshot struct {
-	apps        map[string]*models.MessageApp // by app_key
-	accounts    map[int64]*models.MessageChannelAccount
-	signatures  map[int64]*models.MessageSignature
-	sigAccounts map[int64]map[int64]bool // signatureID -> accountID set
-	templates   map[int64]*models.MessageTemplate
-	policies    map[string]*models.MessagePolicy // "app:channel:scene"
+	apps         map[string]*models.MessageApp // by app_key
+	tenants      map[string]*models.MessageApp // by resolved tenant key (tenant_key column, app_key fallback)
+	accounts     map[int64]*models.MessageChannelAccount
+	signatures   map[int64]*models.MessageSignature
+	sigAccounts  map[int64]map[int64]bool // signatureID -> accountID set
+	templates    map[int64]*models.MessageTemplate
+	policies     map[string]*models.MessagePolicy // "tenant:channel:scene"
+	policyTenant map[int64]string                 // policyID -> resolved tenant (AppScenes listing)
 
 	// Live vendor clients, rebuilt on every Refresh. Accounts that fail to
 	// build (bad credentials) are skipped with a log line — a corrupt row
@@ -48,6 +52,13 @@ type Snapshot struct {
 // App resolves an app by app_key; nil when unknown or soft-deleted.
 func (s *Snapshot) App(appKey string) *models.MessageApp {
 	return s.apps[appKey]
+}
+
+// AppByTenant resolves the tenant's config row by resolved tenant key
+// (tenant_key column, app_key literal fallback for un-backfilled rows);
+// nil when no app maps to the tenant.
+func (s *Snapshot) AppByTenant(tenantKey string) *models.MessageApp {
+	return s.tenants[tenantKey]
 }
 
 // Apps lists every app ordered by id.
@@ -137,15 +148,15 @@ func (s *Snapshot) Templates(appID int64, channel int32) []*models.MessageTempla
 	return out
 }
 
-// Policy resolves the send policy for (app, channel, scene); nil when not
+// Policy resolves the send policy for (tenant, channel, scene); nil when not
 // configured or disabled. channel/scene are TemplateChannel /
 // EmailScene|SmsScene enum int32 values.
-func (s *Snapshot) Policy(appID int64, channel, scene int32) *models.MessagePolicy {
-	return s.policies[policyKey(appID, channel, scene)]
+func (s *Snapshot) Policy(tenantKey string, channel, scene int32) *models.MessagePolicy {
+	return s.policies[policyKey(tenantKey, channel, scene)]
 }
 
 // Policies lists policies filtered by appID (0 = all) and channel (0 =
-// all), ordered by id.
+// all), ordered by id. Admin-surface filter — the send path uses Policy.
 func (s *Snapshot) Policies(appID int64, channel int32) []*models.MessagePolicy {
 	var out []*models.MessagePolicy
 	for _, p := range s.policies {
@@ -161,12 +172,12 @@ func (s *Snapshot) Policies(appID int64, channel int32) []*models.MessagePolicy 
 	return out
 }
 
-// AppScenes lists the scene enum values configured for an app on a
+// AppScenes lists the scene enum values configured for a tenant on a
 // channel (for the POLICY_NOT_FOUND error message).
-func (s *Snapshot) AppScenes(appID int64, channel int32) []int32 {
+func (s *Snapshot) AppScenes(tenantKey string, channel int32) []int32 {
 	var scenes []int32
 	for _, p := range s.policies {
-		if p.AppID == appID && p.Channel == channel {
+		if s.policyTenant[p.ID] == tenantKey && p.Channel == channel {
 			scenes = append(scenes, p.Scene)
 		}
 	}
@@ -209,11 +220,13 @@ func New(db *gorm.DB) *Registry {
 	}
 	snap := &Snapshot{
 		apps:           map[string]*models.MessageApp{},
+		tenants:        map[string]*models.MessageApp{},
 		accounts:       map[int64]*models.MessageChannelAccount{},
 		signatures:     map[int64]*models.MessageSignature{},
 		sigAccounts:    map[int64]map[int64]bool{},
 		templates:      map[int64]*models.MessageTemplate{},
 		policies:       map[string]*models.MessagePolicy{},
+		policyTenant:   map[int64]string{},
 		smsProviders:   map[int64]provesms.AccountProvider{},
 		emailProviders: map[int64]provemail.AccountProvider{},
 	}
@@ -264,16 +277,27 @@ func (r *Registry) Refresh(ctx context.Context) error {
 
 	snap := &Snapshot{
 		apps:           make(map[string]*models.MessageApp, len(apps)),
+		tenants:        make(map[string]*models.MessageApp, len(apps)),
 		accounts:       make(map[int64]*models.MessageChannelAccount, len(accounts)),
 		signatures:     make(map[int64]*models.MessageSignature, len(signatures)),
 		sigAccounts:    make(map[int64]map[int64]bool, len(signatures)),
 		templates:      make(map[int64]*models.MessageTemplate, len(templates)),
 		policies:       make(map[string]*models.MessagePolicy, len(policies)),
+		policyTenant:   make(map[int64]string, len(policies)),
 		smsProviders:   make(map[int64]provesms.AccountProvider, len(accounts)),
 		emailProviders: make(map[int64]provemail.AccountProvider, len(accounts)),
 	}
+	appsByID := make(map[int64]*models.MessageApp, len(apps))
 	for _, a := range apps {
 		snap.apps[a.AppKey] = a
+		appsByID[a.ID] = a
+		if tenant := models.AppTenantKey(a); tenant != "" {
+			if _, dup := snap.tenants[tenant]; dup {
+				slog.Error("registry: duplicate tenant mapping (keeping first)", "tenant", tenant, "app", a.AppKey)
+				continue
+			}
+			snap.tenants[tenant] = a
+		}
 	}
 	for _, a := range accounts {
 		snap.accounts[a.ID] = a
@@ -315,7 +339,22 @@ func (r *Registry) Refresh(ctx context.Context) error {
 		if p.Disabled {
 			continue
 		}
-		snap.policies[policyKey(p.AppID, p.Channel, p.Scene)] = p
+		// Resolve the policy's tenant: the backfilled column, else the app
+		// mapping (pre-③ rows written during the deploy window). A policy
+		// with no resolvable tenant is unreachable from any caller — skip
+		// it loudly rather than silently keying it under "".
+		tenant := models.TenantKeyOf(p.TenantKey)
+		if tenant == "" {
+			if app := appsByID[p.AppID]; app != nil {
+				tenant = models.AppTenantKey(app)
+			}
+		}
+		if tenant == "" {
+			slog.Error("registry: skip policy with unresolvable tenant", "policy_id", p.ID, "app_id", p.AppID)
+			continue
+		}
+		snap.policies[policyKey(tenant, p.Channel, p.Scene)] = p
+		snap.policyTenant[p.ID] = tenant
 	}
 
 	r.snap.Store(snap)

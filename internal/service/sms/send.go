@@ -22,36 +22,45 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-// SendSMS sends a policy-driven SMS: resolves (app, SMS, scene) → policy →
-// template + CN/intl route chains, picks the chain by the destination
+// SendSMS sends a policy-driven SMS: resolves (tenant, SMS, scene) → policy
+// → template + CN/intl route chains, picks the chain by the destination
 // country parsed from the E.164 number, and sends with ordered fallback
-// (weighted start, then list order). Idempotent on (app_key,
+// (weighted start, then list order). Idempotent on (tenant_key,
 // idempotency_key) via Redis.
-func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.SendSMSRequest) (*pb.SendResponse, error) {
+//
+// Phase ③: tenantKey is the caller's resolved tenant context (tenantres);
+// app is its config row (daily limits, audit labels).
+func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, tenantKey string, req *pb.SendSMSRequest) (*pb.SendResponse, error) {
 	if err := validateSendSMSRequest(req); err != nil {
 		return nil, xcodes.ErrBadRequest.Wrap(err)
 	}
 
 	snap := s.reg.Current()
-	policy := snap.Policy(app.ID, int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS), int32(req.GetScene()))
+	policy := snap.Policy(tenantKey, int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS), int32(req.GetScene()))
 	if policy == nil {
 		return nil, xcodes.ErrPolicyNotFound.New(fmt.Sprintf(
-			"no SMS policy for app %q scene %s; configured scenes: %s",
-			app.AppKey, req.GetScene(), sceneList(snap, app.ID, pb.TemplateChannel_TEMPLATE_CHANNEL_SMS)))
+			"no SMS policy for tenant %q scene %s; configured scenes: %s",
+			tenantKey, req.GetScene(), sceneList(snap, tenantKey, pb.TemplateChannel_TEMPLATE_CHANNEL_SMS)))
 	}
 
-	// Daily quota (attempts counted). Runs before the idempotency
-	// reservation so rejected sends never consume the reservation.
-	if err := s.quota.Allow(ctx, app.AppKey, "sms", app.SMSDailyLimit); err != nil {
+	// Daily quota (attempts counted), namespaced by tenant_key (③ re-keying;
+	// for backfilled apps tenant_key == app_key so the counters carry over).
+	// Runs before the idempotency reservation so rejected sends never
+	// consume the reservation.
+	if err := s.quota.Allow(ctx, tenantKey, "sms", app.SMSDailyLimit); err != nil {
 		return nil, err
 	}
 
-	// Idempotency reservation (Redis-backed). Always runs regardless of
-	// persistence toggle — Redis is the single source of dedup truth.
+	// Idempotency reservation (Redis-backed), namespaced by tenant_key —
+	// ③ re-keying: a key replayed under a different tenant is a fresh
+	// namespace (in-flight reservations under a pre-remap app_key are not
+	// visible after T10 remaps the column; the TTL bounds the window).
+	// Always runs regardless of persistence toggle — Redis is the single
+	// source of dedup truth.
 	var idemKey string
 	if k := req.GetIdempotencyKey(); k != "" {
 		idemKey = k
-		acquired, payload, err := s.idem.Reserve(ctx, "sms", app.AppKey, k)
+		acquired, payload, err := s.idem.Reserve(ctx, "sms", tenantKey, k)
 		if err != nil {
 			return nil, xcodes.ErrInternal.Wrap(err)
 		}
@@ -70,7 +79,7 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 		if idemKey == "" {
 			return
 		}
-		if releaseErr := s.idem.Release(context.Background(), "sms", app.AppKey, idemKey); releaseErr != nil {
+		if releaseErr := s.idem.Release(context.Background(), "sms", tenantKey, idemKey); releaseErr != nil {
 			slog.Error("idempotency release after "+reason, "key", idemKey, "error", releaseErr)
 		}
 	}
@@ -125,8 +134,8 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 	if len(routes) == 0 {
 		release("no intl route")
 		return nil, xcodes.ErrPolicyNotFound.New(fmt.Sprintf(
-			"no SMS route chain configured for app %q scene %s to region %s",
-			app.AppKey, req.GetScene(), regionCode))
+			"no SMS route chain configured for tenant %q scene %s to region %s",
+			tenantKey, req.GetScene(), regionCode))
 	}
 
 	// Vendor-code templates resolve per provider (fallback may cross
@@ -200,7 +209,7 @@ func (s *Service) SendSMS(ctx context.Context, app *models.MessageApp, req *pb.S
 		payload, err := protojson.Marshal(resp)
 		if err != nil {
 			slog.Error("idempotency marshal", "key", idemKey, "error", err)
-		} else if err := s.idem.Complete(context.Background(), "sms", app.AppKey, idemKey, payload); err != nil {
+		} else if err := s.idem.Complete(context.Background(), "sms", tenantKey, idemKey, payload); err != nil {
 			slog.Error("idempotency complete", "key", idemKey, "error", err)
 		}
 	}
@@ -310,8 +319,8 @@ func (s *Service) dispatchChain(
 }
 
 // sceneList renders configured scene values for the POLICY_NOT_FOUND error.
-func sceneList(snap *registry.Snapshot, appID int64, channel pb.TemplateChannel) string {
-	scenes := snap.AppScenes(appID, int32(channel))
+func sceneList(snap *registry.Snapshot, tenantKey string, channel pb.TemplateChannel) string {
+	scenes := snap.AppScenes(tenantKey, int32(channel))
 	if len(scenes) == 0 {
 		return "(none)"
 	}

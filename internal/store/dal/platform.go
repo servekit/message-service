@@ -12,6 +12,7 @@ import (
 	"github.com/servekit/message-service/pkg/xcodes"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // --- Apps ---
@@ -22,6 +23,45 @@ func CreateApp(ctx context.Context, tx *gorm.DB, record *models.MessageApp) erro
 		return xcodes.ErrInternal.Wrap(err)
 	}
 	return nil
+}
+
+// EnsureTenantApp idempotently inserts the first-sight tenant config row
+// (trusted x-tenant-key path). ON CONFLICT DO NOTHING + caller re-read, so
+// racing replicas converge on one row and operator edits are never
+// clobbered.
+func EnsureTenantApp(ctx context.Context, tx *gorm.DB, record *models.MessageApp) error {
+	if err := gorm.G[models.MessageApp](tx, clause.OnConflict{
+		Columns:   []clause.Column{{Name: "app_key"}},
+		DoNothing: true,
+	}).Create(ctx, record); err != nil {
+		return xcodes.ErrInternal.Wrap(err)
+	}
+	return nil
+}
+
+// GetAppForTenant resolves the tenant's config row: prefer the tenant_key
+// mapping, fall back to app_key = tenantKey (pre-backfill window rows whose
+// column is still NULL). nil when neither matches.
+func GetAppForTenant(ctx context.Context, tx *gorm.DB, tenantKey string) (*models.MessageApp, error) {
+	record, err := gorm.G[models.MessageApp](tx).
+		Where(generated.MessageApp.TenantKey.Eq(tenantKey)).
+		Take(ctx)
+	if err == nil {
+		return &record, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, xcodes.ErrInternal.Wrap(err)
+	}
+	record, err = gorm.G[models.MessageApp](tx).
+		Where(generated.MessageApp.AppKey.Eq(tenantKey)).
+		Take(ctx)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, xcodes.ErrInternal.Wrap(err)
+	}
+	return &record, nil
 }
 
 // GetApp returns the app with the given ID, or ErrAppNotFound.

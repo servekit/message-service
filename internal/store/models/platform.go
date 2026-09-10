@@ -70,6 +70,12 @@ type MessageApp struct {
 	AppSecret string `gorm:"size:128;column:app_secret;not null"`
 	Name      string `gorm:"size:200;not null"`
 	Disabled  bool   `gorm:"not null;default:false"`
+	// TenantKey maps the app to its tenant (phase ③ dual-stack window).
+	// Nullable transition: NULL = not yet backfilled; the send path falls
+	// back to the app_key literal (T10 总装 clears the empties). Unique —
+	// one config row per tenant. Lazily upserted on the first trusted
+	// x-tenant-key sighting (app_key = tenant_key, default limits).
+	TenantKey *string `gorm:"size:16;column:tenant_key;uniqueIndex:uniq_msg_apps_tenant_key"`
 	// Daily send-attempt caps; 0 = unlimited. Counts attempts, not
 	// deliveries — protects vendor accounts from runaway loops.
 	SMSDailyLimit   int64 `gorm:"column:sms_daily_limit;not null;default:0"`
@@ -97,6 +103,10 @@ type MessageChannelAccount struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
+	// TenantKey marks a tenant-private account (phase ③ resource domain).
+	// NULL = platform pool — usable by every tenant's policies, behavior
+	// unchanged from pre-③.
+	TenantKey *string `gorm:"size:16;column:tenant_key"`
 }
 
 // MessageSignature is an SMS signature (CN) / sender ID (intl).
@@ -108,6 +118,10 @@ type MessageSignature struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
+	// TenantKey marks a tenant-private signature (phase ③ resource domain).
+	// NULL = platform pool — usable by every tenant's policies, behavior
+	// unchanged from pre-③.
+	TenantKey *string `gorm:"size:16;column:tenant_key"`
 }
 
 // MessageSignatureAccount binds a signature to a channel account (报备).
@@ -127,10 +141,11 @@ type TemplateParamSpec struct {
 	Description string `json:"description,omitempty"`
 }
 
-// MessageTemplate is a message template. AppID 0 = shared across all apps.
-// Channel/Kind are messaging.v1 TemplateChannel / TemplateKind enum values;
-// Params is a JSON array of TemplateParamSpec; Content is a JSON document
-// whose shape follows (channel, kind):
+// MessageTemplate is a message template. TenantKey NULL = shared across all
+// tenants (the former AppID=0); otherwise the template is private to that
+// tenant. Channel/Kind are messaging.v1 TemplateChannel / TemplateKind enum
+// values; Params is a JSON array of TemplateParamSpec; Content is a JSON
+// document whose shape follows (channel, kind):
 //   - (EMAIL, EMAIL_RENDER):     {"email": {subject, text_body, html_body}}
 //   - (SMS, SMS_VENDOR_CODES):   {"vendor_codes": [{vendor, template_code}]}
 //   - (SMS, SMS_CONTENT):        {"sms_content": {content}}
@@ -146,18 +161,22 @@ type MessageTemplate struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
+	// TenantKey scopes the template to one tenant (phase ③). NULL = shared
+	// across all tenants — the former AppID=0 semantics. AppID is retained
+	// through the dual-stack window (④ drops it).
+	TenantKey *string `gorm:"size:16;column:tenant_key"`
 }
 
-// MessagePolicy binds (app, channel, scene) to a template + route chains.
+// MessagePolicy binds (tenant, channel, scene) to a template + route chains.
 // Scene holds the EmailScene or SmsScene enum value matching Channel.
 // Routes / IntlRoutes are JSON arrays of send.Route (account_id,
 // signature_id, weight) — ordered fallback chains; IntlRoutes applies to
 // international SMS destinations only.
 type MessagePolicy struct {
 	ID         int64   `gorm:"primaryKey"`
-	AppID      int64   `gorm:"column:app_id;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
-	Channel    int32   `gorm:"column:channel;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
-	Scene      int32   `gorm:"column:scene;uniqueIndex:uniq_msg_policy_app_ch_scene;not null"`
+	AppID      int64   `gorm:"column:app_id;index"`
+	Channel    int32   `gorm:"column:channel;uniqueIndex:uniq_msg_policy_tenant_ch_scene;not null"`
+	Scene      int32   `gorm:"column:scene;uniqueIndex:uniq_msg_policy_tenant_ch_scene;not null"`
 	TemplateID int64   `gorm:"column:template_id;not null"`
 	Disabled   bool    `gorm:"not null;default:false"`
 	Routes     RawJSON `gorm:"type:json;column:routes"`
@@ -165,4 +184,42 @@ type MessagePolicy struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	DeletedAt  gorm.DeletedAt `gorm:"index"`
+	// TenantKey re-keys the policy (phase ③): unique per (tenant_key,
+	// channel, scene). NULL on rows written by pre-③ code during the deploy
+	// window — resolved through the app mapping at registry load time; the
+	// migration backfill leaves no NULLs. AppID is retained through the
+	// window (④ drops it along with the old composite).
+	TenantKey *string `gorm:"size:16;column:tenant_key;uniqueIndex:uniq_msg_policy_tenant_ch_scene"`
+}
+
+// --- tenant_key helpers (nullable-column ergonomics) ---
+
+// TenantKeyOf dereferences a nullable tenant_key column; nil → "".
+func TenantKeyOf(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+// TenantKeyPtr boxes a tenant key; "" → nil (writes NULL — the shared /
+// platform-pool / not-yet-backfilled marker).
+func TenantKeyPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// AppTenantKey resolves the tenant an app row maps to: the tenant_key column
+// when backfilled, else the app_key literal (phase ③ window fallback —
+// T10 总装 clears the empty columns).
+func AppTenantKey(a *MessageApp) string {
+	if a == nil {
+		return ""
+	}
+	if tk := TenantKeyOf(a.TenantKey); tk != "" {
+		return tk
+	}
+	return a.AppKey
 }

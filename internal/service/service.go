@@ -10,7 +10,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -20,7 +19,6 @@ import (
 	pb "github.com/servekit/api/gen/go/messaging/v1"
 	gidservice "github.com/servekit/gid-service/pkg"
 	gidconfig "github.com/servekit/gid-service/pkg/config"
-	"github.com/servekit/message-service/internal/appauth"
 	"github.com/servekit/message-service/internal/idempotency"
 	"github.com/servekit/message-service/internal/jobs"
 	"github.com/servekit/message-service/internal/quota"
@@ -28,7 +26,7 @@ import (
 	"github.com/servekit/message-service/internal/service/admin"
 	svcemail "github.com/servekit/message-service/internal/service/email"
 	svcsms "github.com/servekit/message-service/internal/service/sms"
-	"github.com/servekit/message-service/internal/store/models"
+	"github.com/servekit/message-service/internal/tenantres"
 	"github.com/servekit/message-service/internal/version"
 	"github.com/servekit/message-service/pkg/config"
 	"github.com/servekit/message-service/pkg/option"
@@ -37,7 +35,6 @@ import (
 	"github.com/servekit/go-common/dbx"
 	"github.com/servekit/go-common/lifecycle"
 	"github.com/servekit/go-common/redisx"
-	"github.com/servekit/message-service/pkg/xcodes"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -62,6 +59,9 @@ type Service struct {
 	email *svcemail.Service
 	sms   *svcsms.Service
 	admin *admin.Service
+	// tenants resolves the send path's caller during the ③ dual-stack
+	// window (trusted x-tenant-key vs legacy ak/sk, D-③1).
+	tenants *tenantres.Resolver
 
 	// startedAt is set once in New; Ping returns it for uptime.
 	startedAt int64
@@ -175,6 +175,7 @@ func New(cfg *config.Config, opts ...option.Option) (*Service, error) {
 			cfg.Email.Persistence, cfg.Email.Attachment),
 		sms:       svcsms.New(db, idemChecker, gid, reg, quotaChecker, cfg.SMS.Persistence),
 		admin:     admin.New(db, reg, gid),
+		tenants:   tenantres.New(db, reg),
 		startedAt: time.Now().UnixMilli(),
 	}
 
@@ -203,46 +204,44 @@ func (s *Service) Ping(_ context.Context) (*commonv1.Pong, error) {
 	}, nil
 }
 
-// authenticateApp resolves the calling app from x-app-key/x-app-secret
-// metadata against the registry snapshot. Works identically for gRPC
-// (metadata arrives from the wire) and module-mode (caller wrapped ctx via
-// appauth.WithApp / pkg.WithApp).
-func (s *Service) authenticateApp(ctx context.Context) (*models.MessageApp, error) {
-	appKey, appSecret, ok := appauth.Credentials(ctx)
-	if !ok {
-		return nil, xcodes.ErrAppUnauthorized.New("missing app credentials (x-app-key / x-app-secret metadata)")
-	}
-	app := s.reg.Current().App(appKey)
-	if app == nil || app.Disabled {
-		return nil, xcodes.ErrAppUnauthorized.New(fmt.Sprintf("unknown or disabled app %q", appKey))
-	}
-	if app.AppSecret != appSecret {
-		return nil, xcodes.ErrAppUnauthorized.New("invalid app secret")
-	}
-	return app, nil
+// resolveCaller classifies the caller's credential stack and resolves the
+// tenant context (dual-stack window, D-③1):
+//
+//   - trusted x-tenant-key (portal proxy): the tenant key IS the context;
+//     its config row is lazily upserted on first sight (tenantres);
+//   - legacy x-app-key/x-app-secret: the existing app validation, then the
+//     app converts to its mapped tenant_key (column empty → app_key
+//     literal; T10 总装 clears the empties);
+//   - neither: unauthenticated.
+//
+// Works identically for gRPC (metadata arrives from the wire) and
+// module-mode (caller wrapped ctx via appauth.WithTenant / WithApp /
+// pkg.WithApp).
+func (s *Service) resolveCaller(ctx context.Context) (*tenantres.Caller, error) {
+	return s.tenants.Require(ctx)
 }
 
 // --- facade methods (one per RPC, delegate to subpackage) ---
 
-// SendEmail authenticates the calling app, then delegates to the email
-// subpackage with the app identity (policy lookup, quota, idempotency
-// namespace all hang off it).
+// SendEmail authenticates the caller, then delegates to the email
+// subpackage with the tenant context (policy lookup, quota, idempotency
+// namespace all hang off tenant_key).
 func (s *Service) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
-	app, err := s.authenticateApp(ctx)
+	caller, err := s.resolveCaller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.email.SendEmail(ctx, app, req)
+	return s.email.SendEmail(ctx, caller.App, caller.TenantKey, req)
 }
 
-// SendSMS authenticates the calling app, then delegates to the SMS
-// subpackage. See SendEmail.
+// SendSMS authenticates the caller, then delegates to the SMS subpackage.
+// See SendEmail.
 func (s *Service) SendSMS(ctx context.Context, req *pb.SendSMSRequest) (*pb.SendResponse, error) {
-	app, err := s.authenticateApp(ctx)
+	caller, err := s.resolveCaller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.sms.SendSMS(ctx, app, req)
+	return s.sms.SendSMS(ctx, caller.App, caller.TenantKey, req)
 }
 
 // GetEmail delegates to the message subpackage.

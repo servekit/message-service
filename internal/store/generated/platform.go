@@ -13,6 +13,7 @@ var MessageApp = struct {
 	AppSecret       field.String
 	Name            field.String
 	Disabled        field.Bool
+	TenantKey       field.String
 	SMSDailyLimit   field.Number[int64]
 	EmailDailyLimit field.Number[int64]
 	CreatedAt       field.Time
@@ -24,6 +25,7 @@ var MessageApp = struct {
 	AppSecret:       field.String{}.WithColumn("app_secret"),
 	Name:            field.String{}.WithColumn("name"),
 	Disabled:        field.Bool{}.WithColumn("disabled"),
+	TenantKey:       field.String{}.WithColumn("tenant_key"),
 	SMSDailyLimit:   field.Number[int64]{}.WithColumn("sms_daily_limit"),
 	EmailDailyLimit: field.Number[int64]{}.WithColumn("email_daily_limit"),
 	CreatedAt:       field.Time{}.WithColumn("created_at"),
@@ -42,6 +44,7 @@ var MessageChannelAccount = struct {
 	CreatedAt field.Time
 	UpdatedAt field.Time
 	DeletedAt field.Field[gorm.DeletedAt]
+	TenantKey field.String
 }{
 	ID:        field.Number[int64]{}.WithColumn("id"),
 	Channel:   field.Number[int32]{}.WithColumn("channel"),
@@ -53,6 +56,7 @@ var MessageChannelAccount = struct {
 	CreatedAt: field.Time{}.WithColumn("created_at"),
 	UpdatedAt: field.Time{}.WithColumn("updated_at"),
 	DeletedAt: field.Field[gorm.DeletedAt]{}.WithColumn("deleted_at"),
+	TenantKey: field.String{}.WithColumn("tenant_key"),
 }
 
 var MessageSignature = struct {
@@ -63,6 +67,7 @@ var MessageSignature = struct {
 	CreatedAt field.Time
 	UpdatedAt field.Time
 	DeletedAt field.Field[gorm.DeletedAt]
+	TenantKey field.String
 }{
 	ID:        field.Number[int64]{}.WithColumn("id"),
 	Name:      field.String{}.WithColumn("name"),
@@ -71,6 +76,7 @@ var MessageSignature = struct {
 	CreatedAt: field.Time{}.WithColumn("created_at"),
 	UpdatedAt: field.Time{}.WithColumn("updated_at"),
 	DeletedAt: field.Field[gorm.DeletedAt]{}.WithColumn("deleted_at"),
+	TenantKey: field.String{}.WithColumn("tenant_key"),
 }
 
 var MessageSignatureAccount = struct {
@@ -109,6 +115,7 @@ var MessageTemplate = struct {
 	CreatedAt field.Time
 	UpdatedAt field.Time
 	DeletedAt field.Field[gorm.DeletedAt]
+	TenantKey field.String
 }{
 	ID:        field.Number[int64]{}.WithColumn("id"),
 	AppID:     field.Number[int64]{}.WithColumn("app_id"),
@@ -121,6 +128,7 @@ var MessageTemplate = struct {
 	CreatedAt: field.Time{}.WithColumn("created_at"),
 	UpdatedAt: field.Time{}.WithColumn("updated_at"),
 	DeletedAt: field.Field[gorm.DeletedAt]{}.WithColumn("deleted_at"),
+	TenantKey: field.String{}.WithColumn("tenant_key"),
 }
 
 var MessagePolicy = struct {
@@ -135,6 +143,7 @@ var MessagePolicy = struct {
 	CreatedAt  field.Time
 	UpdatedAt  field.Time
 	DeletedAt  field.Field[gorm.DeletedAt]
+	TenantKey  field.String
 }{
 	ID:         field.Number[int64]{}.WithColumn("id"),
 	AppID:      field.Number[int64]{}.WithColumn("app_id"),
@@ -147,4 +156,5 @@ var MessagePolicy = struct {
 	CreatedAt:  field.Time{}.WithColumn("created_at"),
 	UpdatedAt:  field.Time{}.WithColumn("updated_at"),
 	DeletedAt:  field.Field[gorm.DeletedAt]{}.WithColumn("deleted_at"),
+	TenantKey:  field.String{}.WithColumn("tenant_key"),
 }
