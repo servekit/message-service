@@ -8,6 +8,7 @@ import (
 	pb "github.com/servekit/api/gen/go/messaging/v1"
 
 	"github.com/servekit/go-common/grpcx"
+	"github.com/servekit/go-common/tenantctx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -41,11 +42,19 @@ var (
 
 // NewClient creates a Client connected to the given target.
 // If no dial options are provided, it uses insecure credentials by default.
+//
+// The default dial chain forwards both trusted identities: the request actor
+// (x-actor) and the tenant key (x-tenant-key). In grpc mode those ctx values
+// are the only credentials the data plane sees — without the tenant key a
+// consumer's send arrives unauthenticated and fails closed (I2).
 func NewClient(target string, opts ...grpc.DialOption) (*Client, error) {
 	if len(opts) == 0 {
 		opts = []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	}
-	opts = append(opts, grpc.WithChainUnaryInterceptor(grpcx.ForwardActorUnary()))
+	opts = append(opts, grpc.WithChainUnaryInterceptor(
+		grpcx.ForwardActorUnary(),
+		tenantctx.ForwardTenantKeyUnary(),
+	))
 	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", target, err)
