@@ -65,28 +65,26 @@ func (s *Service) nextID(ctx context.Context) (int64, error) {
 // exactly once. The app is stamped with its tenant mapping: a scoped caller
 // (injected key) is clamped to that key; the cross-view keeps an explicit
 // tenant_key when given, else the app_key literal (the legacy→tenant
-// fallback value; T10 总装 remaps).
-func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.CreateAppResponse, error) {
+// fallback value; T10 总装 remaps). Phase ④ T6: the admin surface speaks
+// tenant — the app_key identity is minted server-side and never named by
+// the wire anymore.
+func (s *Service) CreateTenantConfig(ctx context.Context, req *pb.CreateTenantConfigRequest) (*pb.CreateTenantConfigResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
 	}
-	appKey := req.GetAppKey()
+	// Server-generated identity: "app_" + 8 random base36 chars.
+	// Collision odds are negligible; retry defensively anyway.
+	appKey := ""
+	for i := 0; i < 3; i++ {
+		candidate := mintAppKey()
+		if _, err := dal.GetAppByKey(ctx, s.db, candidate); err != nil {
+			appKey = candidate
+			break
+		}
+	}
 	if appKey == "" {
-		// Server-generated identity: "app_" + 8 random base36 chars.
-		// Collision odds are negligible; retry defensively anyway.
-		for i := 0; i < 3; i++ {
-			candidate := mintAppKey()
-			if _, err := dal.GetAppByKey(ctx, s.db, candidate); err != nil {
-				appKey = candidate
-				break
-			}
-		}
-		if appKey == "" {
-			return nil, xcodes.ErrInternal.New("generate app_key: exhausted retries")
-		}
-	} else if _, err := dal.GetAppByKey(ctx, s.db, appKey); err == nil {
-		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf("app_key %q already exists", appKey))
+		return nil, xcodes.ErrInternal.New("generate app_key: exhausted retries")
 	}
 	tenantKey := clampTenantKey(scope, req.GetTenantKey())
 	if tenantKey == "" {
@@ -117,12 +115,13 @@ func (s *Service) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.CreateAppResponse{App: appToProto(app), AppSecret: secret}, nil
+	return &pb.CreateTenantConfigResponse{Config: appToProto(app), AppSecret: secret}, nil
 }
 
-// GetApp returns one app by id. A scoped caller sees only the app mapped
-// to their tenant (foreign apps answer not-found — anti-enumeration).
-func (s *Service) GetApp(ctx context.Context, req *pb.GetAppRequest) (*pb.GetAppResponse, error) {
+// GetTenantConfig returns one tenant config by row id. A scoped caller
+// sees only the row mapped to their tenant (foreign rows answer
+// not-found — anti-enumeration).
+func (s *Service) GetTenantConfig(ctx context.Context, req *pb.GetTenantConfigRequest) (*pb.GetTenantConfigResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -135,12 +134,12 @@ func (s *Service) GetApp(ctx context.Context, req *pb.GetAppRequest) (*pb.GetApp
 		xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
-	return &pb.GetAppResponse{App: appToProto(app)}, nil
+	return &pb.GetTenantConfigResponse{Config: appToProto(app)}, nil
 }
 
-// UpdateApp tweaks app metadata; absent optional fields keep their values.
-// Ownership-checked against the caller's scope.
-func (s *Service) UpdateApp(ctx context.Context, req *pb.UpdateAppRequest) (*pb.UpdateAppResponse, error) {
+// UpdateTenantConfig tweaks config metadata; absent optional fields keep
+// their values. Ownership-checked against the caller's scope.
+func (s *Service) UpdateTenantConfig(ctx context.Context, req *pb.UpdateTenantConfigRequest) (*pb.UpdateTenantConfigResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -169,12 +168,13 @@ func (s *Service) UpdateApp(ctx context.Context, req *pb.UpdateAppRequest) (*pb.
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.UpdateAppResponse{App: appToProto(app)}, nil
+	return &pb.UpdateTenantConfigResponse{Config: appToProto(app)}, nil
 }
 
-// RotateAppSecret invalidates the current secret and returns a new
-// plaintext exactly once. Ownership-checked against the caller's scope.
-func (s *Service) RotateAppSecret(ctx context.Context, req *pb.RotateAppSecretRequest) (*pb.RotateAppSecretResponse, error) {
+// RotateTenantConfigSecret invalidates the current secret and returns a
+// new plaintext exactly once. Ownership-checked against the caller's
+// scope.
+func (s *Service) RotateTenantConfigSecret(ctx context.Context, req *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -196,31 +196,32 @@ func (s *Service) RotateAppSecret(ctx context.Context, req *pb.RotateAppSecretRe
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.RotateAppSecretResponse{App: appToProto(app), AppSecret: secret}, nil
+	return &pb.RotateTenantConfigSecretResponse{Config: appToProto(app), AppSecret: secret}, nil
 }
 
-// ListApps returns the apps in the caller's scope: the two-layer domain for
-// an injected key (platform pool + own mapping — in practice apps always
-// carry a tenant, so this is the own mapping), all apps for the cross-view.
-func (s *Service) ListApps(ctx context.Context, _ *pb.ListAppsRequest) (*pb.ListAppsResponse, error) {
+// ListTenantConfigs returns the tenant configs in the caller's scope: the
+// two-layer domain for an injected key (platform pool + own mapping — in
+// practice configs always carry a tenant, so this is the own mapping), all
+// rows for the cross-view.
+func (s *Service) ListTenantConfigs(ctx context.Context, _ *pb.ListTenantConfigsRequest) (*pb.ListTenantConfigsResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	apps := s.reg.Current().Apps()
-	out := make([]*pb.MessageAppInfo, 0, len(apps))
+	out := make([]*pb.MessageTenantConfigInfo, 0, len(apps))
 	for _, a := range apps {
 		if !visibleInTenant(scope, models.AppTenantKey(a)) {
 			continue
 		}
 		out = append(out, appToProto(a))
 	}
-	return &pb.ListAppsResponse{Apps: out}, nil
+	return &pb.ListTenantConfigsResponse{Configs: out}, nil
 }
 
-// DeleteApp soft-deletes an app; its sends fail immediately.
-// Ownership-checked against the caller's scope.
-func (s *Service) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*emptypb.Empty, error) {
+// DeleteTenantConfig soft-deletes a tenant config; its sends fail
+// immediately. Ownership-checked against the caller's scope.
+func (s *Service) DeleteTenantConfig(ctx context.Context, req *pb.DeleteTenantConfigRequest) (*emptypb.Empty, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -882,8 +883,8 @@ func (s *Service) validatePolicy(ctx context.Context, channel pb.TemplateChannel
 
 // --- conversion helpers ---
 
-func appToProto(a *models.MessageApp) *pb.MessageAppInfo {
-	info := &pb.MessageAppInfo{
+func appToProto(a *models.MessageApp) *pb.MessageTenantConfigInfo {
+	info := &pb.MessageTenantConfigInfo{
 		Id:              a.ID,
 		AppKey:          a.AppKey,
 		AppSecret:       a.AppSecret,

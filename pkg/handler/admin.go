@@ -15,36 +15,38 @@ var _ pb.MessageAdminServiceServer = (*Handler)(nil)
 
 // --- admin gRPC method delegations (platform resource management) ---
 
-// CreateApp registers a calling app; plaintext app_secret returned exactly
-// once in the response.
-func (h *Handler) CreateApp(ctx context.Context, req *pb.CreateAppRequest) (*pb.CreateAppResponse, error) {
-	return h.svc.CreateApp(ctx, req)
+// CreateTenantConfig registers a tenant's config row; plaintext
+// app_secret returned exactly once in the response.
+func (h *Handler) CreateTenantConfig(ctx context.Context, req *pb.CreateTenantConfigRequest) (*pb.CreateTenantConfigResponse, error) {
+	return h.svc.CreateTenantConfig(ctx, req)
 }
 
-// GetApp returns one app by id.
-func (h *Handler) GetApp(ctx context.Context, req *pb.GetAppRequest) (*pb.GetAppResponse, error) {
-	return h.svc.GetApp(ctx, req)
+// GetTenantConfig returns one tenant config by row id.
+func (h *Handler) GetTenantConfig(ctx context.Context, req *pb.GetTenantConfigRequest) (*pb.GetTenantConfigResponse, error) {
+	return h.svc.GetTenantConfig(ctx, req)
 }
 
-// UpdateApp tweaks app metadata (name / disabled / daily limits).
-func (h *Handler) UpdateApp(ctx context.Context, req *pb.UpdateAppRequest) (*pb.UpdateAppResponse, error) {
-	return h.svc.UpdateApp(ctx, req)
+// UpdateTenantConfig tweaks config metadata (name / disabled / daily
+// limits).
+func (h *Handler) UpdateTenantConfig(ctx context.Context, req *pb.UpdateTenantConfigRequest) (*pb.UpdateTenantConfigResponse, error) {
+	return h.svc.UpdateTenantConfig(ctx, req)
 }
 
-// RotateAppSecret invalidates the current secret; new plaintext returned
-// exactly once.
-func (h *Handler) RotateAppSecret(ctx context.Context, req *pb.RotateAppSecretRequest) (*pb.RotateAppSecretResponse, error) {
-	return h.svc.RotateAppSecret(ctx, req)
+// RotateTenantConfigSecret invalidates the current secret; new plaintext
+// returned exactly once.
+func (h *Handler) RotateTenantConfigSecret(ctx context.Context, req *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
+	return h.svc.RotateTenantConfigSecret(ctx, req)
 }
 
-// ListApps returns all apps.
-func (h *Handler) ListApps(ctx context.Context, req *pb.ListAppsRequest) (*pb.ListAppsResponse, error) {
-	return h.svc.ListApps(ctx, req)
+// ListTenantConfigs returns the tenant configs in the caller's scope.
+func (h *Handler) ListTenantConfigs(ctx context.Context, req *pb.ListTenantConfigsRequest) (*pb.ListTenantConfigsResponse, error) {
+	return h.svc.ListTenantConfigs(ctx, req)
 }
 
-// DeleteApp soft-deletes an app; its sends fail immediately.
-func (h *Handler) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*emptypb.Empty, error) {
-	return h.svc.DeleteApp(ctx, req)
+// DeleteTenantConfig soft-deletes a tenant config; its sends fail
+// immediately.
+func (h *Handler) DeleteTenantConfig(ctx context.Context, req *pb.DeleteTenantConfigRequest) (*emptypb.Empty, error) {
+	return h.svc.DeleteTenantConfig(ctx, req)
 }
 
 // CreateChannelAccount adds a vendor account to the platform pool.

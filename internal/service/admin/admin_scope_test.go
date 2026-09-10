@@ -89,13 +89,13 @@ func TestAdminScope_NoIdentityFailsClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "UNAUTHORIZED")
 
-	_, err = svc.ListApps(ctx, &pb.ListAppsRequest{})
+	_, err = svc.ListTenantConfigs(ctx, &pb.ListTenantConfigsRequest{})
 	require.Error(t, err)
 
 	_, err = svc.CreateChannelAccount(ctx, &pb.CreateChannelAccountRequest{Name: "x", Credentials: aliyunCreds()})
 	require.Error(t, err)
 
-	_, err = svc.GetApp(ctx, &pb.GetAppRequest{Id: 1})
+	_, err = svc.GetTenantConfig(ctx, &pb.GetTenantConfigRequest{Id: 1})
 	require.Error(t, err)
 }
 
@@ -119,7 +119,7 @@ func TestAdminScope_ListTwoLayerDomain(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"shared-tpl", "alpha-tpl"}, namesOfTpls(tpls))
 
-	apps, err := svc.ListApps(tenantCtx(scopeAlpha), &pb.ListAppsRequest{})
+	apps, err := svc.ListTenantConfigs(tenantCtx(scopeAlpha), &pb.ListTenantConfigsRequest{})
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"alpha-app"}, namesOfApps(apps))
 
@@ -164,11 +164,11 @@ func TestAdminScope_CreateClampsTenantKey(t *testing.T) {
 	// app create clamps too: a fresh tenant's row is stamped with the
 	// injected key, not the body's (alpha already maps alpha-app, so a
 	// second alpha row would trip the one-config-row-per-tenant check).
-	app, err := svc.CreateApp(tenantCtx("ten_gamma0000000"), &pb.CreateAppRequest{AppKey: "gamma-minted", Name: "n", TenantKey: scopeBeta})
+	app, err := svc.CreateTenantConfig(tenantCtx("ten_gamma0000000"), &pb.CreateTenantConfigRequest{Name: "n", TenantKey: scopeBeta})
 	require.NoError(t, err)
-	assert.Equal(t, "ten_gamma0000000", app.GetApp().GetTenantKey())
+	assert.Equal(t, "ten_gamma0000000", app.GetConfig().GetTenantKey())
 
-	_, err = svc.CreateApp(ctx, &pb.CreateAppRequest{AppKey: "alpha-2", Name: "n", TenantKey: scopeBeta})
+	_, err = svc.CreateTenantConfig(ctx, &pb.CreateTenantConfigRequest{Name: "n", TenantKey: scopeBeta})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "BAD_REQUEST", "one config row per tenant stands under a scope too")
 }
@@ -198,7 +198,7 @@ func TestAdminScope_MutationOwnership(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TEMPLATE_NOT_FOUND")
 
-	_, err = svc.RotateAppSecret(ctx, &pb.RotateAppSecretRequest{Id: 6002})
+	_, err = svc.RotateTenantConfigSecret(ctx, &pb.RotateTenantConfigSecretRequest{Id: 6002})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "APP_NOT_FOUND")
 
@@ -292,23 +292,23 @@ func TestAdminScope_AppSurfaceReads(t *testing.T) {
 	seedScopeWorld(t, svc)
 	ctx := tenantCtx(scopeAlpha)
 
-	got, err := svc.GetApp(ctx, &pb.GetAppRequest{Id: 6001})
+	got, err := svc.GetTenantConfig(ctx, &pb.GetTenantConfigRequest{Id: 6001})
 	require.NoError(t, err)
-	assert.Equal(t, scopeAlpha, got.GetApp().GetTenantKey())
+	assert.Equal(t, scopeAlpha, got.GetConfig().GetTenantKey())
 
-	_, err = svc.GetApp(ctx, &pb.GetAppRequest{Id: 6002})
+	_, err = svc.GetTenantConfig(ctx, &pb.GetTenantConfigRequest{Id: 6002})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "APP_NOT_FOUND")
 
-	_, err = svc.UpdateApp(ctx, &pb.UpdateAppRequest{Id: 6002, Name: strPtr("steal")})
+	_, err = svc.UpdateTenantConfig(ctx, &pb.UpdateTenantConfigRequest{Id: 6002, Name: strPtr("steal")})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "APP_NOT_FOUND")
 
-	_, err = svc.DeleteApp(ctx, &pb.DeleteAppRequest{Id: 6002})
+	_, err = svc.DeleteTenantConfig(ctx, &pb.DeleteTenantConfigRequest{Id: 6002})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "APP_NOT_FOUND")
 
-	_, err = svc.UpdateApp(ctx, &pb.UpdateAppRequest{Id: 6001, Name: strPtr("mine")})
+	_, err = svc.UpdateTenantConfig(ctx, &pb.UpdateTenantConfigRequest{Id: 6001, Name: strPtr("mine")})
 	require.NoError(t, err)
 }
 
@@ -340,9 +340,9 @@ func namesOfTpls(resp *pb.ListTemplatesResponse) []string {
 	return out
 }
 
-func namesOfApps(resp *pb.ListAppsResponse) []string {
-	out := make([]string, 0, len(resp.GetApps()))
-	for _, a := range resp.GetApps() {
+func namesOfApps(resp *pb.ListTenantConfigsResponse) []string {
+	out := make([]string, 0, len(resp.GetConfigs()))
+	for _, a := range resp.GetConfigs() {
 		out = append(out, a.GetAppKey())
 	}
 	return out

@@ -232,23 +232,26 @@ func TestSignatureBindingCrossTenantAccountRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "BAD_REQUEST")
 }
 
-// TestCreateAppStampsTenantKey: apps created with an explicit tenant_key keep
-// it; without one the app_key literal is stamped (the legacy→tenant fallback
-// value; T10 总装 remaps).
-func TestCreateAppStampsTenantKey(t *testing.T) {
+// TestCreateTenantConfigStampsTenantKey (phase ④ T6 rename): configs created
+// with an explicit tenant_key keep it; without one the server-minted app_key
+// literal is stamped (the legacy→tenant fallback value; T10 总装 remaps) —
+// asserted by reading the minted key back, since the wire no longer names it.
+func TestCreateTenantConfigStampsTenantKey(t *testing.T) {
 	svc, _ := newTenantAdminFixture(t)
 	ctx := platformCtx() // phase ④ T5: the admin surface requires a trusted identity
 
-	resp, err := svc.CreateApp(ctx, &pb.CreateAppRequest{AppKey: "explicit-app", Name: "n", TenantKey: "ten_explicit0000"})
+	resp, err := svc.CreateTenantConfig(ctx, &pb.CreateTenantConfigRequest{Name: "n", TenantKey: "ten_explicit0000"})
 	require.NoError(t, err)
-	assert.Equal(t, "ten_explicit0000", resp.GetApp().GetTenantKey())
+	assert.Equal(t, "ten_explicit0000", resp.GetConfig().GetTenantKey())
 
-	resp, err = svc.CreateApp(ctx, &pb.CreateAppRequest{AppKey: "implicit-app", Name: "n"})
+	resp, err = svc.CreateTenantConfig(ctx, &pb.CreateTenantConfigRequest{Name: "n"})
 	require.NoError(t, err)
-	assert.Equal(t, "implicit-app", resp.GetApp().GetTenantKey())
+	minted := resp.GetConfig().GetAppKey()
+	assert.NotEmpty(t, minted, "the app identity is server-minted now")
+	assert.Equal(t, minted, resp.GetConfig().GetTenantKey(), "no explicit tenant: the minted app_key literal is the fallback stamp")
 
 	// duplicate mapping refused
-	_, err = svc.CreateApp(ctx, &pb.CreateAppRequest{AppKey: "another-app", Name: "n", TenantKey: "ten_explicit0000"})
+	_, err = svc.CreateTenantConfig(ctx, &pb.CreateTenantConfigRequest{Name: "n", TenantKey: "ten_explicit0000"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "BAD_REQUEST")
 }

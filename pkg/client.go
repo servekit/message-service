@@ -129,36 +129,36 @@ func (c *Client) ListSMSRegions(ctx context.Context, in *pb.ListSMSRegionsReques
 	return c.cli.ListSMSRegions(ctx, in)
 }
 
-// --- admin delegations (MessageAdminService) ---
+// --- admin delegations (MessageAdminService; phase ④ T6 tenant rename) ---
 
-// CreateApp delegates to the remote message-service admin surface.
-func (c *Client) CreateApp(ctx context.Context, in *pb.CreateAppRequest) (*pb.CreateAppResponse, error) {
-	return c.adm.CreateApp(ctx, in)
+// CreateTenantConfig delegates to the remote message-service admin surface.
+func (c *Client) CreateTenantConfig(ctx context.Context, in *pb.CreateTenantConfigRequest) (*pb.CreateTenantConfigResponse, error) {
+	return c.adm.CreateTenantConfig(ctx, in)
 }
 
-// GetApp delegates to the remote message-service admin surface.
-func (c *Client) GetApp(ctx context.Context, in *pb.GetAppRequest) (*pb.GetAppResponse, error) {
-	return c.adm.GetApp(ctx, in)
+// GetTenantConfig delegates to the remote message-service admin surface.
+func (c *Client) GetTenantConfig(ctx context.Context, in *pb.GetTenantConfigRequest) (*pb.GetTenantConfigResponse, error) {
+	return c.adm.GetTenantConfig(ctx, in)
 }
 
-// UpdateApp delegates to the remote message-service admin surface.
-func (c *Client) UpdateApp(ctx context.Context, in *pb.UpdateAppRequest) (*pb.UpdateAppResponse, error) {
-	return c.adm.UpdateApp(ctx, in)
+// UpdateTenantConfig delegates to the remote message-service admin surface.
+func (c *Client) UpdateTenantConfig(ctx context.Context, in *pb.UpdateTenantConfigRequest) (*pb.UpdateTenantConfigResponse, error) {
+	return c.adm.UpdateTenantConfig(ctx, in)
 }
 
-// RotateAppSecret delegates to the remote message-service admin surface.
-func (c *Client) RotateAppSecret(ctx context.Context, in *pb.RotateAppSecretRequest) (*pb.RotateAppSecretResponse, error) {
-	return c.adm.RotateAppSecret(ctx, in)
+// RotateTenantConfigSecret delegates to the remote message-service admin surface.
+func (c *Client) RotateTenantConfigSecret(ctx context.Context, in *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
+	return c.adm.RotateTenantConfigSecret(ctx, in)
 }
 
-// ListApps delegates to the remote message-service admin surface.
-func (c *Client) ListApps(ctx context.Context, in *pb.ListAppsRequest) (*pb.ListAppsResponse, error) {
-	return c.adm.ListApps(ctx, in)
+// ListTenantConfigs delegates to the remote message-service admin surface.
+func (c *Client) ListTenantConfigs(ctx context.Context, in *pb.ListTenantConfigsRequest) (*pb.ListTenantConfigsResponse, error) {
+	return c.adm.ListTenantConfigs(ctx, in)
 }
 
-// DeleteApp delegates to the remote message-service admin surface.
-func (c *Client) DeleteApp(ctx context.Context, in *pb.DeleteAppRequest) (*emptypb.Empty, error) {
-	return c.adm.DeleteApp(ctx, in)
+// DeleteTenantConfig delegates to the remote message-service admin surface.
+func (c *Client) DeleteTenantConfig(ctx context.Context, in *pb.DeleteTenantConfigRequest) (*emptypb.Empty, error) {
+	return c.adm.DeleteTenantConfig(ctx, in)
 }
 
 // CreateChannelAccount delegates to the remote message-service admin surface.
