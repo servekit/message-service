@@ -6,6 +6,7 @@ package dal
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/servekit/message-service/internal/store/generated"
 	"github.com/servekit/message-service/internal/store/models"
@@ -29,12 +30,50 @@ func CreateApp(ctx context.Context, tx *gorm.DB, record *models.MessageApp) erro
 // (trusted x-tenant-key path). ON CONFLICT DO NOTHING + caller re-read, so
 // racing replicas converge on one row and operator edits are never
 // clobbered.
+//
+// F2 hardening: the conflict target is now BROAD (no column list). The
+// previous ON CONFLICT (app_key) left two edges where a soft-deleted
+// occupant permanently 500'd the tenant's first send: an app_key-equal
+// occupant suppressed the insert and the scoped re-read missed it ("row
+// absent after insert"), while an occupant holding tenant_key under a
+// DIFFERENT app_key raised a raw uniq_msg_apps_tenant_key violation the
+// narrow target did not cover. After the suppressed insert the occupant is
+// looked up UNSCOPED (by tenant_key, then the app_key-equal fallback
+// mirroring GetAppForTenant) and revived in place — deleted_at cleared,
+// tenant_key re-pointed — while its historic identity fields stay verbatim
+// (app_key/secret/name/daily limits are the operator's row). A LIVE
+// occupant (a racing replica's row) is left untouched.
 func EnsureTenantApp(ctx context.Context, tx *gorm.DB, record *models.MessageApp) error {
 	if err := gorm.G[models.MessageApp](tx, clause.OnConflict{
-		Columns:   []clause.Column{{Name: "app_key"}},
 		DoNothing: true,
 	}).Create(ctx, record); err != nil {
 		return xcodes.ErrInternal.Wrap(err)
+	}
+
+	tk := models.TenantKeyOf(record.TenantKey)
+	var occupant models.MessageApp
+	err := tx.WithContext(ctx).Unscoped().
+		Where("tenant_key = ? OR app_key = ?", tk, record.AppKey).
+		Take(&occupant).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil // insert landed; the caller's re-read confirms
+		}
+		return xcodes.ErrInternal.Wrap(err)
+	}
+	if occupant.DeletedAt.Time.IsZero() && !occupant.DeletedAt.Valid {
+		return nil // live occupant: race winner or existing row — never clobbered
+	}
+	res := tx.WithContext(ctx).Unscoped().
+		Model(&models.MessageApp{}).
+		Where("id = ?", occupant.ID).
+		Updates(map[string]any{
+			"deleted_at": nil,
+			"tenant_key": tk,
+			"updated_at": time.Now(),
+		})
+	if res.Error != nil {
+		return xcodes.ErrInternal.Wrap(res.Error)
 	}
 	return nil
 }

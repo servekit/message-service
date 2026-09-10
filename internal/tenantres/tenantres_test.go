@@ -3,6 +3,7 @@ package tenantres
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/servekit/message-service/internal/appauth"
 	"github.com/servekit/message-service/internal/registry"
@@ -104,6 +105,63 @@ func TestRequireTrustedReusesUnbackfilledRow(t *testing.T) {
 	apps, err := dal.ListApps(context.Background(), db)
 	require.NoError(t, err)
 	require.Len(t, apps, 1, "no duplicate row for an app_key-equal trusted key")
+}
+
+// TestRequireTrustedRevivesSoftDeletedOccupant pins the F2 hardening: a
+// soft-deleted config row occupying the tenant's unique keys hit the narrow
+// ON CONFLICT (app_key) DO NOTHING edge — an app_key-equal occupant made the
+// insert no-op and the scoped re-read miss ("row absent after insert"
+// INTERNAL), while a tenant_key-holding occupant under a DIFFERENT app_key
+// raised a raw unique-violation 500 (the conflict target did not cover
+// uniq_msg_apps_tenant_key). Ensure semantics now revive the occupant in
+// place: un-delete, re-point tenant_key, keep the historic identity fields
+// (app_key, secret, name, daily limits).
+func TestRequireTrustedRevivesSoftDeletedOccupant(t *testing.T) {
+	r, db, _ := setup(t)
+	const tenantKey = "ten_dead0000000"
+
+	// Occupant shape 1: app_key = tenant_key (the conflict-target shape the
+	// narrow ON CONFLICT suppressed).
+	dead := &models.MessageApp{
+		AppKey: tenantKey, AppSecret: "old-secret", Name: "old name",
+		TenantKey: models.TenantKeyPtr(tenantKey), SMSDailyLimit: 7, EmailDailyLimit: 9,
+	}
+	require.NoError(t, db.Create(dead).Error)
+	require.NoError(t, db.Model(&models.MessageApp{}).Where("id = ?", dead.ID).
+		Update("deleted_at", time.Now()).Error)
+
+	c, err := r.Require(appauth.WithTenant(context.Background(), tenantKey))
+	require.NoError(t, err, "a soft-deleted occupant must be revived, not 500")
+	require.Equal(t, tenantKey, c.TenantKey)
+	require.Equal(t, dead.ID, c.App.ID, "the occupant row is revived in place")
+	require.Equal(t, "old-secret", c.App.AppSecret, "historic secret kept (revive ≠ re-mint)")
+	require.Equal(t, int64(7), c.App.SMSDailyLimit, "historic daily limits kept")
+
+	var deletedCount int64
+	require.NoError(t, db.Unscoped().Model(&models.MessageApp{}).
+		Where("id = ? AND deleted_at IS NOT NULL", dead.ID).Count(&deletedCount).Error)
+	require.Zero(t, deletedCount, "row must be live again")
+}
+
+// TestRequireTrustedRevivesSoftDeletedMappedOccupant: occupant shape 2 — a
+// soft-deleted row holding tenant_key under a DIFFERENT app_key (the shape
+// the narrow conflict target turned into a unique-violation 500).
+func TestRequireTrustedRevivesSoftDeletedMappedOccupant(t *testing.T) {
+	r, db, _ := setup(t)
+	const tenantKey = "ten_mapped000000"
+
+	dead := &models.MessageApp{
+		AppKey: "msg_oldalias1", AppSecret: "s", Name: "old",
+		TenantKey: models.TenantKeyPtr(tenantKey),
+	}
+	require.NoError(t, db.Create(dead).Error)
+	require.NoError(t, db.Model(&models.MessageApp{}).Where("id = ?", dead.ID).
+		Update("deleted_at", time.Now()).Error)
+
+	c, err := r.Require(appauth.WithTenant(context.Background(), tenantKey))
+	require.NoError(t, err, "the tenant_key unique-violation edge must revive, not 500")
+	require.Equal(t, dead.ID, c.App.ID)
+	require.Equal(t, tenantKey, models.TenantKeyOf(c.App.TenantKey))
 }
 
 // TestRequireFailureModes: bad secret / unknown app / no credentials /
