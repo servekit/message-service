@@ -17,8 +17,8 @@ type MessageSMSRecord struct {
 	Status     int32  `gorm:"not null;default:0;index"`
 	RegionCode string `gorm:"size:2;column:region_code;not null;index"`
 	Phone      string `gorm:"size:64;column:phone;not null;index"`
-	// AppKey identifies the calling app (the authenticated sender identity
-	// resolved from x-app-key credentials at send time).
+	// AppKey identifies the tenant the send resolved under (the directory
+	// the trusted x-tenant-key named at send time).
 	AppKey string `gorm:"size:64;column:app_key;index"`
 	// SignName is the SMS signature / intl sender ID resolved from the
 	// policy route that handled the send.

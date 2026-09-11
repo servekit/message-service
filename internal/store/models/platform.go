@@ -59,9 +59,10 @@ func (r *RawJSON) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MessageApp is a registered calling application — the x-app-key identity.
-// Policies belong to apps; daily quotas and idempotency namespaces hang off
-// app_key.
+// MessageApp is a tenant's config row — the send path's per-tenant limits
+// and the anchor policies/templates hang off. Since the ④ window close the
+// tenant arrives via the trusted x-tenant-key; the minted secret only
+// satisfies the not-null column.
 type MessageApp struct {
 	ID     int64  `gorm:"primaryKey"`
 	AppKey string `gorm:"size:64;column:app_key;uniqueIndex;not null"`

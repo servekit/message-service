@@ -89,9 +89,9 @@ var ErrAttachmentFetchFailed = xerr.New(
 	"failed to fetch attachment",
 )
 
-// ErrAppUnauthorized indicates the request carried no app credentials
-// (x-app-key / x-app-secret metadata), unknown credentials, or a disabled
-// app. Policy-driven sends require an authenticated app identity.
+// ErrAppUnauthorized indicates the request carried no trusted credential
+// (x-tenant-key), a malformed one, or a disabled config row. Policy-driven
+// sends require an authenticated tenant identity.
 var ErrAppUnauthorized = xerr.New(
 	"APP_UNAUTHORIZED",
 	xerr.CategoryUnauthorized,

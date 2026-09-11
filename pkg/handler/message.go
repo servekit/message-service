@@ -58,10 +58,10 @@ func (h *Handler) Ping(ctx context.Context, _ *emptypb.Empty) (*commonv1.Pong, e
 // use" (prerequisites, side effects, follow-up RPCs) for in-process module
 // callers; for the full contract see message.proto.
 
-// SendEmail sends a policy-driven email: (app, EMAIL, scene) resolves the
-// send policy (template + provider route chain); the app identity comes
-// from x-app-key/x-app-secret metadata. Idempotent on (app_key,
-// idempotency_key) via Redis when idempotency_key is set.
+// SendEmail sends a policy-driven email: (tenant, EMAIL, scene) resolves
+// the send policy (template + provider route chain); the tenant comes from
+// the trusted x-tenant-key. Idempotent on (tenant_key, idempotency_key)
+// via Redis when idempotency_key is set.
 // Returns: record ID + MessageStatus (SENT = vendor accepted sync;
 // FAILED is returned as ErrMessageSendFailed).
 func (h *Handler) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.SendResponse, error) {
@@ -131,4 +131,3 @@ func (h *Handler) GetSMSStats(ctx context.Context, req *pb.GetSMSStatsRequest) (
 func (h *Handler) ListSMSRegions(ctx context.Context, req *pb.ListSMSRegionsRequest) (*pb.ListSMSRegionsResponse, error) {
 	return h.svc.ListSMSRegions(ctx, req)
 }
-

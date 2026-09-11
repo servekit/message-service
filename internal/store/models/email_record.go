@@ -18,8 +18,8 @@ type MessageEmailRecord struct {
 	Scene   int32  `gorm:"not null;default:0;index"`
 	Status  int32  `gorm:"not null;default:0;index"`
 	Target  string `gorm:"size:255;not null;index"`
-	// AppKey identifies the calling app (the authenticated sender identity
-	// resolved from x-app-key credentials at send time).
+	// AppKey identifies the tenant the send resolved under (the directory
+	// the trusted x-tenant-key named at send time).
 	AppKey         string          `gorm:"size:64;column:app_key;index"`
 	Cc             StringSlice     `gorm:"type:json;column:cc"`
 	Bcc            StringSlice     `gorm:"type:json;column:bcc"`
