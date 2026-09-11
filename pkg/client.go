@@ -146,11 +146,6 @@ func (c *Client) UpdateTenantConfig(ctx context.Context, in *pb.UpdateTenantConf
 	return c.adm.UpdateTenantConfig(ctx, in)
 }
 
-// RotateTenantConfigSecret delegates to the remote message-service admin surface.
-func (c *Client) RotateTenantConfigSecret(ctx context.Context, in *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
-	return c.adm.RotateTenantConfigSecret(ctx, in)
-}
-
 // ListTenantConfigs delegates to the remote message-service admin surface.
 func (c *Client) ListTenantConfigs(ctx context.Context, in *pb.ListTenantConfigsRequest) (*pb.ListTenantConfigsResponse, error) {
 	return c.adm.ListTenantConfigs(ctx, in)

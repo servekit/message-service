@@ -99,17 +99,6 @@ var ErrAppUnauthorized = xerr.New(
 	"missing or invalid app credentials",
 )
 
-// ErrSecretRetired refuses the config-secret rotation RPC: the app_secret
-// column was dropped when the ④ window closed (spec §9.1.3) — config rows
-// carry no credential; the data plane authenticates via the trusted
-// x-tenant-key the doors inject.
-var ErrSecretRetired = xerr.New(
-	"SECRET_RETIRED",
-	xerr.CategoryBadRequest,
-	400,
-	"app_secret was retired; the data plane authenticates via x-tenant-key",
-)
-
 // ErrPolicyNotFound indicates no enabled policy is configured for the
 // calling app + channel + scene. The message lists the app's configured
 // scenes so the caller can self-correct. Fail-closed by design — no silent

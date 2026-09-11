@@ -126,17 +126,14 @@ func (s *Snapshot) Template(id int64) *models.MessageTemplate {
 	return s.templates[id]
 }
 
-// Templates lists templates filtered by appID (0 = all) and channel (0 =
-// all), ordered by id. appID names a tenant-config row; the filter is
-// resolved through its tenant (the template rows carry tenant_key — the
-// legacy app_id column was dropped with the ④ window close). Shared
-// templates (tenant_key NULL) stay visible under every app filter, matching
-// the former AppID=0 semantics.
-func (s *Snapshot) Templates(appID int64, channel int32) []*models.MessageTemplate {
-	tenant := s.tenantOfApp(appID)
+// Templates lists templates filtered by tenant_key ("" = all) and channel
+// (0 = all), ordered by id. The rows carry tenant_key directly (the legacy
+// app_id column was dropped with the ④ window close). Shared templates
+// (tenant_key NULL) stay visible under every tenant filter.
+func (s *Snapshot) Templates(tenantKey string, channel int32) []*models.MessageTemplate {
 	var out []*models.MessageTemplate
 	for _, t := range s.templates {
-		if appID != 0 && t.TenantKey != nil && models.TenantKeyOf(t.TenantKey) != tenant {
+		if tenantKey != "" && t.TenantKey != nil && models.TenantKeyOf(t.TenantKey) != tenantKey {
 			continue
 		}
 		if channel != 0 && t.Channel != channel {
@@ -146,18 +143,6 @@ func (s *Snapshot) Templates(appID int64, channel int32) []*models.MessageTempla
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
-}
-
-// tenantOfApp resolves a tenant-config row id to its tenant key ("" for the
-// shared/unknown id — the id 0 sentinel).
-func (s *Snapshot) tenantOfApp(appID int64) string {
-	if appID == 0 {
-		return ""
-	}
-	if app := s.AppByID(appID); app != nil {
-		return models.AppTenantKey(app)
-	}
-	return ""
 }
 
 // AppIDForTenant reverse-resolves a tenant key to its tenant-config row id
@@ -180,15 +165,14 @@ func (s *Snapshot) Policy(tenantKey string, channel, scene int32) *models.Messag
 	return s.policies[policyKey(tenantKey, channel, scene)]
 }
 
-// Policies lists policies filtered by appID (0 = all) and channel (0 =
-// all), ordered by id. appID names a tenant-config row; the filter matches
-// the policy's resolved tenant (the legacy app_id column was dropped with
-// the ④ window close). Admin-surface filter — the send path uses Policy.
-func (s *Snapshot) Policies(appID int64, channel int32) []*models.MessagePolicy {
-	tenant := s.tenantOfApp(appID)
+// Policies lists policies filtered by tenant_key ("" = all) and channel
+// (0 = all), ordered by id. The filter matches the policy's resolved tenant
+// (the rows were re-keyed to tenant_key with the ④ window close).
+// Admin-surface filter — the send path uses Policy.
+func (s *Snapshot) Policies(tenantKey string, channel int32) []*models.MessagePolicy {
 	var out []*models.MessagePolicy
 	for _, p := range s.policies {
-		if appID != 0 && s.policyTenant[p.ID] != tenant {
+		if tenantKey != "" && s.policyTenant[p.ID] != tenantKey {
 			continue
 		}
 		if channel != 0 && p.Channel != channel {

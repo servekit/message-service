@@ -303,12 +303,6 @@ func (s *Service) UpdateTenantConfig(ctx context.Context, req *pb.UpdateTenantCo
 	return s.admin.UpdateTenantConfig(ctx, req)
 }
 
-// RotateTenantConfigSecret invalidates the current secret; new plaintext
-// returned exactly once.
-func (s *Service) RotateTenantConfigSecret(ctx context.Context, req *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
-	return s.admin.RotateTenantConfigSecret(ctx, req)
-}
-
 // ListTenantConfigs returns the tenant configs in the caller's scope.
 func (s *Service) ListTenantConfigs(ctx context.Context, req *pb.ListTenantConfigsRequest) (*pb.ListTenantConfigsResponse, error) {
 	return s.admin.ListTenantConfigs(ctx, req)

@@ -167,27 +167,6 @@ func (s *Service) UpdateTenantConfig(ctx context.Context, req *pb.UpdateTenantCo
 	return &pb.UpdateTenantConfigResponse{Config: appToProto(app)}, nil
 }
 
-// RotateTenantConfigSecret is retired: the app_secret column was dropped
-// when the ④ window closed (spec §9.1.3) — config rows carry no credential
-// to rotate. Ownership-checked against the caller's scope before refusing,
-// so a foreign row still answers not-found rather than the retirement
-// error.
-func (s *Service) RotateTenantConfigSecret(ctx context.Context, req *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
-	scope, err := scopeFromCtx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	app, err := dal.GetApp(ctx, s.db, req.GetId())
-	if err != nil {
-		return nil, err
-	}
-	if err := authorizeManageRow(scope, app.TenantKey,
-		xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetId()))); err != nil {
-		return nil, err
-	}
-	return nil, xcodes.ErrSecretRetired.New("app_secret was retired with the ④ window close; the data plane authenticates via the trusted x-tenant-key")
-}
-
 // ListTenantConfigs returns the tenant configs in the caller's scope: the
 // two-layer domain for an injected key (platform pool + own mapping — in
 // practice configs always carry a tenant, so this is the own mapping), all
@@ -632,15 +611,16 @@ func (s *Service) DeleteTemplate(ctx context.Context, req *pb.DeleteTemplateRequ
 	return &emptypb.Empty{}, nil
 }
 
-// ListTemplates filters by app (0 = all) and channel (0 = all), scoped to
-// the caller: the two-layer domain (shared + own rows) for an injected
-// key, everything for the cross-view.
+// ListTemplates filters by tenant ("" = all: shared + every tenant's
+// private rows) and channel (0 = all), scoped to the caller: the two-layer
+// domain (shared + own rows) for an injected key, everything for the
+// cross-view.
 func (s *Service) ListTemplates(ctx context.Context, req *pb.ListTemplatesRequest) (*pb.ListTemplatesResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
 	}
-	templates := s.reg.Current().Templates(req.GetAppId(), int32(req.GetChannel()))
+	templates := s.reg.Current().Templates(req.GetTenantKey(), int32(req.GetChannel()))
 	out := make([]*pb.TemplateInfo, 0, len(templates))
 	for _, t := range templates {
 		if !visibleInTenant(scope, models.TenantKeyOf(t.TenantKey)) {
@@ -773,15 +753,15 @@ func (s *Service) DeletePolicy(ctx context.Context, req *pb.DeletePolicyRequest)
 	return &emptypb.Empty{}, nil
 }
 
-// ListPolicies filters by app (0 = all) and channel (0 = all), scoped to
-// the caller: the two-layer domain (shared leftovers + own rows) for an
+// ListPolicies filters by tenant ("" = all) and channel (0 = all), scoped
+// to the caller: the two-layer domain (shared leftovers + own rows) for an
 // injected key, everything for the cross-view.
 func (s *Service) ListPolicies(ctx context.Context, req *pb.ListPoliciesRequest) (*pb.ListPoliciesResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
 		return nil, err
 	}
-	policies := s.reg.Current().Policies(req.GetAppId(), int32(req.GetChannel()))
+	policies := s.reg.Current().Policies(req.GetTenantKey(), int32(req.GetChannel()))
 	out := make([]*pb.PolicyInfo, 0, len(policies))
 	for _, p := range policies {
 		if !visibleInTenant(scope, s.policyTenant(p)) {

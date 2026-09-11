@@ -198,10 +198,6 @@ func TestAdminScope_MutationOwnership(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TEMPLATE_NOT_FOUND")
 
-	_, err = svc.RotateTenantConfigSecret(ctx, &pb.RotateTenantConfigSecretRequest{Id: 6002})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "APP_NOT_FOUND")
-
 	// platform pool → visible but read-only
 	_, err = svc.UpdateChannelAccount(ctx, &pb.UpdateChannelAccountRequest{Id: 6101, Remark: strPtr("x")})
 	require.Error(t, err)

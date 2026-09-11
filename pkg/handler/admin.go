@@ -32,12 +32,6 @@ func (h *Handler) UpdateTenantConfig(ctx context.Context, req *pb.UpdateTenantCo
 	return h.svc.UpdateTenantConfig(ctx, req)
 }
 
-// RotateTenantConfigSecret invalidates the current secret; new plaintext
-// returned exactly once.
-func (h *Handler) RotateTenantConfigSecret(ctx context.Context, req *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
-	return h.svc.RotateTenantConfigSecret(ctx, req)
-}
-
 // ListTenantConfigs returns the tenant configs in the caller's scope.
 func (h *Handler) ListTenantConfigs(ctx context.Context, req *pb.ListTenantConfigsRequest) (*pb.ListTenantConfigsResponse, error) {
 	return h.svc.ListTenantConfigs(ctx, req)
