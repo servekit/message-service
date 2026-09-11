@@ -23,7 +23,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// tenantSMSFixture wires a policy whose AppID and TenantKey deliberately
+// tenantSMSFixture wires a policy whose TenantKey deliberately
 // disagree with the tenant the caller presents — the shape that distinguishes
 // "keyed by app" from "keyed by tenant".
 type tenantSMSFixture struct {
@@ -40,7 +40,7 @@ func newTenantSMSFixture(t *testing.T, appTenant string, policyTenant string, sm
 	ctx := context.Background()
 
 	app := &models.MessageApp{
-		ID: 5001, AppKey: "tenant-app", AppSecret: "s", Name: "Tenant App",
+		ID: 5001, AppKey: "tenant-app", Name: "Tenant App",
 		SMSDailyLimit: smsLimit, TenantKey: models.TenantKeyPtr(appTenant),
 	}
 	require.NoError(t, dal.CreateApp(ctx, db, app))
@@ -73,7 +73,7 @@ func newTenantSMSFixture(t *testing.T, appTenant string, policyTenant string, sm
 	})
 	require.NoError(t, err)
 	policy := &models.MessagePolicy{
-		ID: 9001, AppID: app.ID, TenantKey: models.TenantKeyPtr(policyTenant),
+		ID: 9001, TenantKey: models.TenantKeyPtr(policyTenant),
 		Channel:    int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
 		Scene:      int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE),
 		TemplateID: template.ID,
@@ -104,7 +104,7 @@ func tenantSendReq(idem string) *pb.SendSMSRequest {
 
 // TestSendSMSPolicyKeyedByTenant: the policy row is found through the
 // caller's tenant context, and invisible under any other tenant — even
-// though its AppID matches the calling app row exactly.
+// even though it names the calling app row as its owner.
 func TestSendSMSPolicyKeyedByTenant(t *testing.T) {
 	fx := newTenantSMSFixture(t, "ten_alpha0000000", "ten_alpha0000000", 0)
 
@@ -133,10 +133,10 @@ func TestSendSMSQuotaNamespacedByTenant(t *testing.T) {
 
 	// beta's own config row (unlimited) + policy: its counter is a
 	// different namespace, unaffected by alpha's trips.
-	beta := &models.MessageApp{ID: 5002, AppKey: "beta-cfg", AppSecret: "s", Name: "beta", TenantKey: models.TenantKeyPtr("ten_beta0000000")}
+	beta := &models.MessageApp{ID: 5002, AppKey: "beta-cfg", Name: "beta", TenantKey: models.TenantKeyPtr("ten_beta0000000")}
 	require.NoError(t, dal.CreateApp(context.Background(), fx.db, beta))
 	betaPolicy := &models.MessagePolicy{
-		ID: 9002, AppID: beta.ID, TenantKey: models.TenantKeyPtr("ten_beta0000000"),
+		ID: 9002, TenantKey: models.TenantKeyPtr("ten_beta0000000"),
 		Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS), Scene: int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE),
 		TemplateID: 8001, Routes: mustRoutes(t), IntlRoutes: mustRoutes(t),
 	}
@@ -171,10 +171,10 @@ func TestSendSMSIdempotencyNamespacedByTenant(t *testing.T) {
 	// give beta its own config row + policy (same shape): the same key under
 	// beta is a DIFFERENT namespace — it must send again, not replay alpha's
 	// answer.
-	beta := &models.MessageApp{ID: 5002, AppKey: "beta-cfg", AppSecret: "s", Name: "beta", TenantKey: models.TenantKeyPtr("ten_beta0000000")}
+	beta := &models.MessageApp{ID: 5002, AppKey: "beta-cfg", Name: "beta", TenantKey: models.TenantKeyPtr("ten_beta0000000")}
 	require.NoError(t, dal.CreateApp(context.Background(), fx.db, beta))
 	betaPolicy := &models.MessagePolicy{
-		ID: 9002, AppID: fx.app.ID, TenantKey: models.TenantKeyPtr("ten_beta0000000"),
+		ID: 9002, TenantKey: models.TenantKeyPtr("ten_beta0000000"),
 		Channel:    int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
 		Scene:      int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE),
 		TemplateID: 8001,

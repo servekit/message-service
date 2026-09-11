@@ -46,6 +46,9 @@ func Migrate(db *gorm.DB) error {
 	if err := postMigrateTenantKey(db); err != nil {
 		return fmt.Errorf("post-migrate tenant_key: %w", err)
 	}
+	if err := postMigrateDropLegacy(db); err != nil {
+		return fmt.Errorf("post-migrate legacy drops: %w", err)
+	}
 	return nil
 }
 
@@ -77,15 +80,24 @@ func postMigrateTenantKey(db *gorm.DB) error {
 		`UPDATE %s SET tenant_key = app_key WHERE tenant_key IS NULL`, apps)).Error; err != nil {
 		return fmt.Errorf("backfill message_apps: %w", err)
 	}
-	if err := db.Exec(fmt.Sprintf(`UPDATE %s t SET tenant_key = a.tenant_key
-		FROM %s a
-		WHERE t.app_id = a.id AND t.app_id <> 0 AND t.tenant_key IS NULL`, templates, apps)).Error; err != nil {
-		return fmt.Errorf("backfill message_templates: %w", err)
+	// The pointer-driven backfills and reconciles can only run while the
+	// legacy app_id column still exists (④ drops it after its own converge
+	// check; fresh post-④ databases never carry it — nothing to backfill).
+	hasAppID, err := columnExists(db, templates, "app_id")
+	if err != nil {
+		return err
 	}
-	if err := db.Exec(fmt.Sprintf(`UPDATE %s p SET tenant_key = a.tenant_key
-		FROM %s a
-		WHERE p.app_id = a.id AND p.tenant_key IS NULL`, policies, apps)).Error; err != nil {
-		return fmt.Errorf("backfill message_policies: %w", err)
+	if hasAppID {
+		if err := db.Exec(fmt.Sprintf(`UPDATE %s t SET tenant_key = a.tenant_key
+			FROM %s a
+			WHERE t.app_id = a.id AND t.app_id <> 0 AND t.tenant_key IS NULL`, templates, apps)).Error; err != nil {
+			return fmt.Errorf("backfill message_templates: %w", err)
+		}
+		if err := db.Exec(fmt.Sprintf(`UPDATE %s p SET tenant_key = a.tenant_key
+			FROM %s a
+			WHERE p.app_id = a.id AND p.tenant_key IS NULL`, policies, apps)).Error; err != nil {
+			return fmt.Errorf("backfill message_policies: %w", err)
+		}
 	}
 
 	// Reconcile: every row that must carry a tenant_key does.
@@ -93,13 +105,15 @@ func postMigrateTenantKey(db *gorm.DB) error {
 		fmt.Sprintf(`SELECT count(*), count(tenant_key) FROM %s`, apps)); err != nil {
 		return err
 	}
-	if err := reconcileTenantKey(db, "message_templates",
-		fmt.Sprintf(`SELECT count(*) FILTER (WHERE app_id <> 0), count(tenant_key) FILTER (WHERE app_id <> 0) FROM %s`, templates)); err != nil {
-		return err
-	}
-	if err := reconcileTenantKey(db, "message_policies",
-		fmt.Sprintf(`SELECT count(*), count(tenant_key) FROM %s`, policies)); err != nil {
-		return err
+	if hasAppID {
+		if err := reconcileTenantKey(db, "message_templates",
+			fmt.Sprintf(`SELECT count(*) FILTER (WHERE app_id <> 0), count(tenant_key) FILTER (WHERE app_id <> 0) FROM %s`, templates)); err != nil {
+			return err
+		}
+		if err := reconcileTenantKey(db, "message_policies",
+			fmt.Sprintf(`SELECT count(*), count(tenant_key) FROM %s`, policies)); err != nil {
+			return err
+		}
 	}
 
 	// Guarded drop of the superseded composite (only when the replacement
@@ -117,6 +131,76 @@ func postMigrateTenantKey(db *gorm.DB) error {
 		return fmt.Errorf("drop superseded policy index: %w", err)
 	}
 	slog.Info("migrate: phase3 tenant_key post-migration complete")
+	return nil
+}
+
+// columnExists reports whether the physical table carries the column.
+func columnExists(db *gorm.DB, table, column string) (bool, error) {
+	var exists bool
+	if err := db.Raw(
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?)`,
+		table, column,
+	).Scan(&exists).Error; err != nil {
+		return false, fmt.Errorf("check column %s.%s: %w", table, column, err)
+	}
+	return exists, nil
+}
+
+// postMigrateDropLegacy closes the ④ window on the data side
+// (deploy/phase4-drop-legacy.sql performs the identical procedure by hand):
+// after the ③ tenant_key re-keying converged, drop the legacy app_id
+// pointers on templates/policies and the retired message_apps.app_secret
+// credential column. Policies reconcile (count(tenant_key) = count(*)) and
+// their replacement index must exist before the pointer goes; templates
+// keep NULL tenant_key rows (shared semantics), so their drop is guarded on
+// the ③ backfill only. DROP … IF EXISTS keeps it idempotent on fresh
+// databases (testcontainers never carry the columns).
+func postMigrateDropLegacy(db *gorm.DB) error {
+	//nolint:staticcheck // gorm.DB.Dialector is an interface field, not embedding
+	if db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	templates := tableName(db, "message_templates")
+	policies := tableName(db, "message_policies")
+	apps := tableName(db, "message_apps")
+
+	if hasPolicies, err := columnExists(db, policies, "app_id"); err != nil {
+		return err
+	} else if hasPolicies {
+		var hasNew int64
+		if err := db.Raw(`SELECT count(*) FROM pg_indexes
+			WHERE tablename = ? AND indexname = 'uniq_msg_policy_tenant_ch_scene'`, policies).
+			Scan(&hasNew).Error; err != nil {
+			return fmt.Errorf("check replacement index: %w", err)
+		}
+		if hasNew == 0 {
+			return fmt.Errorf("refusing to drop message_policies.app_id: replacement uniq_msg_policy_tenant_ch_scene missing")
+		}
+		var total, filled int64
+		if err := db.Raw(fmt.Sprintf(
+			`SELECT count(*), count(tenant_key) FROM %s`, policies)).Row().Scan(&total, &filled); err != nil {
+			return fmt.Errorf("reconcile message_policies: %w", err)
+		}
+		if filled != total {
+			return fmt.Errorf("refusing to drop message_policies.app_id: %d of %d rows carry tenant_key", filled, total)
+		}
+	}
+	if err := db.Exec(`DROP INDEX IF EXISTS idx_message_templates_app_id`).Error; err != nil {
+		return fmt.Errorf("drop superseded template index: %w", err)
+	}
+	if err := db.Exec(`DROP INDEX IF EXISTS uniq_msg_policy_app_ch_scene`).Error; err != nil {
+		return fmt.Errorf("drop superseded policy index: %w", err)
+	}
+	if err := db.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN IF EXISTS app_id`, templates)).Error; err != nil {
+		return fmt.Errorf("drop message_templates.app_id: %w", err)
+	}
+	if err := db.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN IF EXISTS app_id`, policies)).Error; err != nil {
+		return fmt.Errorf("drop message_policies.app_id: %w", err)
+	}
+	if err := db.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN IF EXISTS app_secret`, apps)).Error; err != nil {
+		return fmt.Errorf("drop message_apps.app_secret: %w", err)
+	}
+	slog.Info("migrate: phase4 legacy-column drops complete")
 	return nil
 }
 

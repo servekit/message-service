@@ -39,7 +39,7 @@ func setup(t *testing.T) (*Resolver, *gorm.DB, *registry.Registry) {
 // snapshot so the legacy path (snapshot-only reads) sees it.
 func seedApp(t *testing.T, db *gorm.DB, reg *registry.Registry, id int64, appKey, secret string, tenantKey *string) {
 	t.Helper()
-	app := &models.MessageApp{ID: id, AppKey: appKey, AppSecret: secret, Name: appKey, TenantKey: tenantKey}
+	app := &models.MessageApp{ID: id, AppKey: appKey, Name: appKey, TenantKey: tenantKey}
 	require.NoError(t, dal.CreateApp(context.Background(), db, app))
 	require.NoError(t, reg.Refresh(context.Background()))
 }
@@ -157,7 +157,7 @@ func TestRequireTrustedRevivesSoftDeletedOccupant(t *testing.T) {
 	// Occupant shape 1: app_key = tenant_key (the conflict-target shape the
 	// narrow ON CONFLICT suppressed).
 	dead := &models.MessageApp{
-		AppKey: tenantKey, AppSecret: "old-secret", Name: "old name",
+		AppKey: tenantKey, Name: "old name",
 		TenantKey: models.TenantKeyPtr(tenantKey), SMSDailyLimit: 7, EmailDailyLimit: 9,
 	}
 	require.NoError(t, db.Create(dead).Error)
@@ -168,7 +168,7 @@ func TestRequireTrustedRevivesSoftDeletedOccupant(t *testing.T) {
 	require.NoError(t, err, "a soft-deleted occupant must be revived, not 500")
 	require.Equal(t, tenantKey, c.TenantKey)
 	require.Equal(t, dead.ID, c.App.ID, "the occupant row is revived in place")
-	require.Equal(t, "old-secret", c.App.AppSecret, "historic secret kept (revive ≠ re-mint)")
+	require.Equal(t, "old name", c.App.Name, "historic name kept (revive ≠ re-create)")
 	require.Equal(t, int64(7), c.App.SMSDailyLimit, "historic daily limits kept")
 
 	var deletedCount int64
@@ -185,7 +185,7 @@ func TestRequireTrustedRevivesSoftDeletedMappedOccupant(t *testing.T) {
 	const tenantKey = "ten_mapped000000"
 
 	dead := &models.MessageApp{
-		AppKey: "msg_oldalias1", AppSecret: "s", Name: "old",
+		AppKey: "msg_oldalias1", Name: "old",
 		TenantKey: models.TenantKeyPtr(tenantKey),
 	}
 	require.NoError(t, db.Create(dead).Error)
@@ -209,11 +209,11 @@ func TestRequireTrustedLiveOccupantPreferredOverDead(t *testing.T) {
 	const tenantKey = "ten_live00000000"
 
 	live := &models.MessageApp{
-		AppKey: tenantKey, AppSecret: "live-secret", Name: "live", TenantKey: nil,
+		AppKey: tenantKey, Name: "live", TenantKey: nil,
 	}
 	require.NoError(t, db.Create(live).Error)
 	dead := &models.MessageApp{
-		AppKey: "msg_oldalias2", AppSecret: "old-secret", Name: "dead",
+		AppKey: "msg_oldalias2", Name: "dead",
 		TenantKey: models.TenantKeyPtr(tenantKey),
 	}
 	require.NoError(t, db.Create(dead).Error)
@@ -223,7 +223,7 @@ func TestRequireTrustedLiveOccupantPreferredOverDead(t *testing.T) {
 	c, err := r.Require(tenantctx.WithTenant(context.Background(), tenantKey))
 	require.NoError(t, err)
 	require.Equal(t, live.ID, c.App.ID, "the LIVE occupant must win the unscoped lookup")
-	require.Equal(t, "live-secret", c.App.AppSecret)
+	require.Equal(t, "live", c.App.Name)
 
 	var still int64
 	require.NoError(t, db.Unscoped().Model(&models.MessageApp{}).

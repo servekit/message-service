@@ -61,16 +61,13 @@ func (r *RawJSON) UnmarshalJSON(data []byte) error {
 
 // MessageApp is a tenant's config row — the send path's per-tenant limits
 // and the anchor policies/templates hang off. Since the ④ window close the
-// tenant arrives via the trusted x-tenant-key; the minted secret only
-// satisfies the not-null column.
+// tenant arrives via the trusted x-tenant-key; the credential column is gone
+// (spec §9.1.3 — retired, not migrated).
 type MessageApp struct {
-	ID     int64  `gorm:"primaryKey"`
-	AppKey string `gorm:"size:64;column:app_key;uniqueIndex;not null"`
-	// AppSecret is stored PLAINTEXT — internal-trust posture (see
-	// specs/2026-09-07-message-platform-design.md §8).
-	AppSecret string `gorm:"size:128;column:app_secret;not null"`
-	Name      string `gorm:"size:200;not null"`
-	Disabled  bool   `gorm:"not null;default:false"`
+	ID       int64  `gorm:"primaryKey"`
+	AppKey   string `gorm:"size:64;column:app_key;uniqueIndex;not null"`
+	Name     string `gorm:"size:200;not null"`
+	Disabled bool   `gorm:"not null;default:false"`
 	// TenantKey maps the app to its tenant (phase ③ dual-stack window).
 	// Nullable transition: NULL = not yet backfilled; the send path falls
 	// back to the app_key literal (T10 总装 clears the empties). Unique —
@@ -152,7 +149,6 @@ type TemplateParamSpec struct {
 //   - (SMS, SMS_CONTENT):        {"sms_content": {content}}
 type MessageTemplate struct {
 	ID        int64   `gorm:"primaryKey"`
-	AppID     int64   `gorm:"column:app_id;not null;default:0;index"`
 	Name      string  `gorm:"size:200;not null"`
 	Channel   int32   `gorm:"not null;default:0"`
 	Kind      int32   `gorm:"not null;default:0"`
@@ -162,9 +158,9 @@ type MessageTemplate struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
-	// TenantKey scopes the template to one tenant (phase ③). NULL = shared
-	// across all tenants — the former AppID=0 semantics. AppID is retained
-	// through the dual-stack window (④ drops it).
+	// TenantKey scopes the template to one tenant (phase ③; the legacy
+	// app_id pointer was dropped with the ④ window close). NULL = shared
+	// across all tenants — the former AppID=0 semantics.
 	TenantKey *string `gorm:"size:16;column:tenant_key"`
 }
 
@@ -175,7 +171,6 @@ type MessageTemplate struct {
 // international SMS destinations only.
 type MessagePolicy struct {
 	ID         int64   `gorm:"primaryKey"`
-	AppID      int64   `gorm:"column:app_id;index"`
 	Channel    int32   `gorm:"column:channel;uniqueIndex:uniq_msg_policy_tenant_ch_scene;not null"`
 	Scene      int32   `gorm:"column:scene;uniqueIndex:uniq_msg_policy_tenant_ch_scene;not null"`
 	TemplateID int64   `gorm:"column:template_id;not null"`
@@ -186,10 +181,8 @@ type MessagePolicy struct {
 	UpdatedAt  time.Time
 	DeletedAt  gorm.DeletedAt `gorm:"index"`
 	// TenantKey re-keys the policy (phase ③): unique per (tenant_key,
-	// channel, scene). NULL on rows written by pre-③ code during the deploy
-	// window — resolved through the app mapping at registry load time; the
-	// migration backfill leaves no NULLs. AppID is retained through the
-	// window (④ drops it along with the old composite).
+	// channel, scene); the ③ migration backfill left no NULLs and the
+	// legacy app_id pointer was dropped with the ④ window close.
 	TenantKey *string `gorm:"size:16;column:tenant_key;uniqueIndex:uniq_msg_policy_tenant_ch_scene"`
 }
 

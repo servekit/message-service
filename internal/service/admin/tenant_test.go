@@ -52,7 +52,7 @@ func aliyunCreds() *pb.ChannelAccountCredentials {
 // seedAppRow inserts an app row with a mapped tenant (raw column control).
 func seedAppRow(t *testing.T, db *gorm.DB, id int64, appKey, tenant string) *models.MessageApp {
 	t.Helper()
-	app := &models.MessageApp{ID: id, AppKey: appKey, AppSecret: "s", Name: appKey, TenantKey: models.TenantKeyPtr(tenant)}
+	app := &models.MessageApp{ID: id, AppKey: appKey, Name: appKey, TenantKey: models.TenantKeyPtr(tenant)}
 	require.NoError(t, dal.CreateApp(context.Background(), db, app))
 	return app
 }

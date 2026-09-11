@@ -10,7 +10,6 @@ import (
 var MessageApp = struct {
 	ID              field.Number[int64]
 	AppKey          field.String
-	AppSecret       field.String
 	Name            field.String
 	Disabled        field.Bool
 	TenantKey       field.String
@@ -22,7 +21,6 @@ var MessageApp = struct {
 }{
 	ID:              field.Number[int64]{}.WithColumn("id"),
 	AppKey:          field.String{}.WithColumn("app_key"),
-	AppSecret:       field.String{}.WithColumn("app_secret"),
 	Name:            field.String{}.WithColumn("name"),
 	Disabled:        field.Bool{}.WithColumn("disabled"),
 	TenantKey:       field.String{}.WithColumn("tenant_key"),
@@ -105,7 +103,6 @@ var TemplateParamSpec = struct {
 
 var MessageTemplate = struct {
 	ID        field.Number[int64]
-	AppID     field.Number[int64]
 	Name      field.String
 	Channel   field.Number[int32]
 	Kind      field.Number[int32]
@@ -118,7 +115,6 @@ var MessageTemplate = struct {
 	TenantKey field.String
 }{
 	ID:        field.Number[int64]{}.WithColumn("id"),
-	AppID:     field.Number[int64]{}.WithColumn("app_id"),
 	Name:      field.String{}.WithColumn("name"),
 	Channel:   field.Number[int32]{}.WithColumn("channel"),
 	Kind:      field.Number[int32]{}.WithColumn("kind"),
@@ -133,7 +129,6 @@ var MessageTemplate = struct {
 
 var MessagePolicy = struct {
 	ID         field.Number[int64]
-	AppID      field.Number[int64]
 	Channel    field.Number[int32]
 	Scene      field.Number[int32]
 	TemplateID field.Number[int64]
@@ -146,7 +141,6 @@ var MessagePolicy = struct {
 	TenantKey  field.String
 }{
 	ID:         field.Number[int64]{}.WithColumn("id"),
-	AppID:      field.Number[int64]{}.WithColumn("app_id"),
 	Channel:    field.Number[int32]{}.WithColumn("channel"),
 	Scene:      field.Number[int32]{}.WithColumn("scene"),
 	TemplateID: field.Number[int64]{}.WithColumn("template_id"),

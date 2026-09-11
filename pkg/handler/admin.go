@@ -15,8 +15,8 @@ var _ pb.MessageAdminServiceServer = (*Handler)(nil)
 
 // --- admin gRPC method delegations (platform resource management) ---
 
-// CreateTenantConfig registers a tenant's config row; plaintext
-// app_secret returned exactly once in the response.
+// CreateTenantConfig registers a tenant's config row (no secret — the
+// credential column was retired with the ④ window close).
 func (h *Handler) CreateTenantConfig(ctx context.Context, req *pb.CreateTenantConfigRequest) (*pb.CreateTenantConfigResponse, error) {
 	return h.svc.CreateTenantConfig(ctx, req)
 }

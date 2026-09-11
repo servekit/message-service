@@ -14,7 +14,6 @@ package admin
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"time"
@@ -61,8 +60,10 @@ func (s *Service) nextID(ctx context.Context) (int64, error) {
 
 // --- Apps ---
 
-// CreateApp registers a calling app and returns the plaintext app_secret
-// exactly once. The app is stamped with its tenant mapping: a scoped caller
+// CreateTenantConfig registers a tenant config row. The credential column
+// is gone (④ window close, spec §9.1.3) — nothing secret is minted or
+// returned; the data plane authenticates by the trusted x-tenant-key. The
+// row is stamped with its tenant mapping: a scoped caller
 // (injected key) is clamped to that key; the cross-view keeps an explicit
 // tenant_key when given, else the app_key literal (the legacy→tenant
 // fallback value; T10 总装 remaps). Phase ④ T6: the admin surface speaks
@@ -94,10 +95,6 @@ func (s *Service) CreateTenantConfig(ctx context.Context, req *pb.CreateTenantCo
 		return nil, xcodes.ErrBadRequest.New(fmt.Sprintf(
 			"tenant_key %q already mapped to app %q", tenantKey, app.AppKey))
 	}
-	secret, err := mintSecret()
-	if err != nil {
-		return nil, xcodes.ErrInternal.Wrap(err)
-	}
 	id, err := s.nextID(ctx)
 	if err != nil {
 		return nil, xcodes.ErrInternal.Wrap(err)
@@ -106,7 +103,6 @@ func (s *Service) CreateTenantConfig(ctx context.Context, req *pb.CreateTenantCo
 		ID:              id,
 		AppKey:          appKey,
 		TenantKey:       models.TenantKeyPtr(tenantKey),
-		AppSecret:       secret,
 		Name:            req.GetName(),
 		SMSDailyLimit:   req.GetSmsDailyLimit(),
 		EmailDailyLimit: req.GetEmailDailyLimit(),
@@ -115,7 +111,7 @@ func (s *Service) CreateTenantConfig(ctx context.Context, req *pb.CreateTenantCo
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.CreateTenantConfigResponse{Config: appToProto(app), AppSecret: secret}, nil
+	return &pb.CreateTenantConfigResponse{Config: appToProto(app)}, nil
 }
 
 // GetTenantConfig returns one tenant config by row id. A scoped caller
@@ -171,9 +167,11 @@ func (s *Service) UpdateTenantConfig(ctx context.Context, req *pb.UpdateTenantCo
 	return &pb.UpdateTenantConfigResponse{Config: appToProto(app)}, nil
 }
 
-// RotateTenantConfigSecret invalidates the current secret and returns a
-// new plaintext exactly once. Ownership-checked against the caller's
-// scope.
+// RotateTenantConfigSecret is retired: the app_secret column was dropped
+// when the ④ window closed (spec §9.1.3) — config rows carry no credential
+// to rotate. Ownership-checked against the caller's scope before refusing,
+// so a foreign row still answers not-found rather than the retirement
+// error.
 func (s *Service) RotateTenantConfigSecret(ctx context.Context, req *pb.RotateTenantConfigSecretRequest) (*pb.RotateTenantConfigSecretResponse, error) {
 	scope, err := scopeFromCtx(ctx)
 	if err != nil {
@@ -187,16 +185,7 @@ func (s *Service) RotateTenantConfigSecret(ctx context.Context, req *pb.RotateTe
 		xcodes.ErrAppNotFound.New(fmt.Sprintf("app %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
-	secret, err := mintSecret()
-	if err != nil {
-		return nil, xcodes.ErrInternal.Wrap(err)
-	}
-	app.AppSecret = secret
-	if err := dal.UpdateApp(ctx, s.db, app); err != nil {
-		return nil, err
-	}
-	s.refresh(ctx)
-	return &pb.RotateTenantConfigSecretResponse{Config: appToProto(app), AppSecret: secret}, nil
+	return nil, xcodes.ErrSecretRetired.New("app_secret was retired with the ④ window close; the data plane authenticates via the trusted x-tenant-key")
 }
 
 // ListTenantConfigs returns the tenant configs in the caller's scope: the
@@ -549,7 +538,7 @@ func (s *Service) CreateTemplate(ctx context.Context, req *pb.CreateTemplateRequ
 	if err != nil {
 		return nil, err
 	}
-	t, err := templateToModel(req.GetTemplate(), req.GetAppId())
+	t, err := templateToModel(req.GetTemplate())
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +555,7 @@ func (s *Service) CreateTemplate(ctx context.Context, req *pb.CreateTemplateRequ
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.CreateTemplateResponse{Template: templateToProto(t)}, nil
+	return &pb.CreateTemplateResponse{Template: templateToProto(s.reg.Current().AppIDForTenant, t)}, nil
 }
 
 // templateTenant resolves the owning tenant for a template scoped to
@@ -608,18 +597,17 @@ func (s *Service) UpdateTemplate(ctx context.Context, req *pb.UpdateTemplateRequ
 		xcodes.ErrTemplateNotFound.New(fmt.Sprintf("template %d not found", req.GetId()))); err != nil {
 		return nil, err
 	}
-	t, err := templateToModel(req.GetTemplate(), existing.AppID)
+	t, err := templateToModel(req.GetTemplate())
 	if err != nil {
 		return nil, err
 	}
 	t.ID = existing.ID
-	t.AppID = existing.AppID
 	t.TenantKey = existing.TenantKey
 	if err := dal.UpdateTemplate(ctx, s.db, t); err != nil {
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.UpdateTemplateResponse{Template: templateToProto(t)}, nil
+	return &pb.UpdateTemplateResponse{Template: templateToProto(s.reg.Current().AppIDForTenant, t)}, nil
 }
 
 // DeleteTemplate soft-deletes a template. Ownership-checked against the
@@ -658,7 +646,7 @@ func (s *Service) ListTemplates(ctx context.Context, req *pb.ListTemplatesReques
 		if !visibleInTenant(scope, models.TenantKeyOf(t.TenantKey)) {
 			continue
 		}
-		out = append(out, templateToProto(t))
+		out = append(out, templateToProto(s.reg.Current().AppIDForTenant, t))
 	}
 	return &pb.ListTemplatesResponse{Templates: out}, nil
 }
@@ -708,7 +696,6 @@ func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest)
 	}
 	policy := &models.MessagePolicy{
 		ID:         id,
-		AppID:      req.GetAppId(),
 		TenantKey:  models.TenantKeyPtr(tenantKey),
 		Channel:    int32(channel),
 		Scene:      scene,
@@ -720,7 +707,7 @@ func (s *Service) CreatePolicy(ctx context.Context, req *pb.CreatePolicyRequest)
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.CreatePolicyResponse{Policy: policyToProto(policy, req.GetRoutes(), req.GetIntlRoutes())}, nil
+	return &pb.CreatePolicyResponse{Policy: policyToProto(s.reg.Current().AppIDForTenant, policy, req.GetRoutes(), req.GetIntlRoutes())}, nil
 }
 
 // UpdatePolicy fully replaces template + route chains. Tenant / channel /
@@ -761,7 +748,7 @@ func (s *Service) UpdatePolicy(ctx context.Context, req *pb.UpdatePolicyRequest)
 		return nil, err
 	}
 	s.refresh(ctx)
-	return &pb.UpdatePolicyResponse{Policy: policyToProto(policy, req.GetRoutes(), req.GetIntlRoutes())}, nil
+	return &pb.UpdatePolicyResponse{Policy: policyToProto(s.reg.Current().AppIDForTenant, policy, req.GetRoutes(), req.GetIntlRoutes())}, nil
 }
 
 // DeletePolicy removes the binding; sends fail closed from then on.
@@ -802,18 +789,15 @@ func (s *Service) ListPolicies(ctx context.Context, req *pb.ListPoliciesRequest)
 		}
 		routes, _ := send.ParseRoutes(p.Routes)
 		intlRoutes, _ := send.ParseRoutes(p.IntlRoutes)
-		out = append(out, policyToProto(p, routesToProto(routes), routesToProto(intlRoutes)))
+		out = append(out, policyToProto(s.reg.Current().AppIDForTenant, p, routesToProto(routes), routesToProto(intlRoutes)))
 	}
 	return &pb.ListPoliciesResponse{Policies: out}, nil
 }
 
-// policyTenant resolves a stored policy's tenant (the backfilled column,
-// else the app mapping — same chain as the registry load).
+// policyTenant resolves a stored policy's tenant from its tenant_key
+// column (the registry load's chain minus the deleted legacy pointer).
 func (s *Service) policyTenant(p *models.MessagePolicy) string {
-	if tk := models.TenantKeyOf(p.TenantKey); tk != "" {
-		return tk
-	}
-	return models.AppTenantKey(s.reg.Current().AppByID(p.AppID))
+	return models.TenantKeyOf(p.TenantKey)
 }
 
 // validatePolicy checks: template exists with matching channel and stays in
@@ -887,7 +871,6 @@ func appToProto(a *models.MessageApp) *pb.MessageTenantConfigInfo {
 	info := &pb.MessageTenantConfigInfo{
 		Id:              a.ID,
 		AppKey:          a.AppKey,
-		AppSecret:       a.AppSecret,
 		Name:            a.Name,
 		Disabled:        a.Disabled,
 		TenantKey:       models.TenantKeyOf(a.TenantKey),
@@ -956,10 +939,10 @@ func routesToProto(rs []send.Route) []*pb.RouteRule {
 	return out
 }
 
-func policyToProto(p *models.MessagePolicy, routes, intlRoutes []*pb.RouteRule) *pb.PolicyInfo {
+func policyToProto(appIDFor func(string) int64, p *models.MessagePolicy, routes, intlRoutes []*pb.RouteRule) *pb.PolicyInfo {
 	info := &pb.PolicyInfo{
 		Id:         p.ID,
-		AppId:      p.AppID,
+		AppId:      appIDFor(models.TenantKeyOf(p.TenantKey)),
 		TenantKey:  models.TenantKeyOf(p.TenantKey),
 		Channel:    pb.TemplateChannel(p.Channel),
 		TemplateId: p.TemplateID,
@@ -982,7 +965,7 @@ func policyToProto(p *models.MessagePolicy, routes, intlRoutes []*pb.RouteRule) 
 	return info
 }
 
-func templateToModel(t *pb.TemplateInfo, appID int64) (*models.MessageTemplate, error) {
+func templateToModel(t *pb.TemplateInfo) (*models.MessageTemplate, error) {
 	channel := t.GetChannel()
 	kind := t.GetKind()
 	var content models.RawJSON
@@ -1016,7 +999,6 @@ func templateToModel(t *pb.TemplateInfo, appID int64) (*models.MessageTemplate, 
 		return nil, xcodes.ErrBadRequest.Wrap(err)
 	}
 	return &models.MessageTemplate{
-		AppID:    appID,
 		Name:     t.GetName(),
 		Channel:  int32(channel),
 		Kind:     int32(kind),
@@ -1026,10 +1008,10 @@ func templateToModel(t *pb.TemplateInfo, appID int64) (*models.MessageTemplate, 
 	}, nil
 }
 
-func templateToProto(t *models.MessageTemplate) *pb.TemplateInfo {
+func templateToProto(appIDFor func(string) int64, t *models.MessageTemplate) *pb.TemplateInfo {
 	info := &pb.TemplateInfo{
 		Id:        t.ID,
-		AppId:     t.AppID,
+		AppId:     appIDFor(models.TenantKeyOf(t.TenantKey)),
 		Name:      t.Name,
 		Channel:   pb.TemplateChannel(t.Channel),
 		Kind:      pb.TemplateKind(t.Kind),
@@ -1097,13 +1079,4 @@ func mintAppKey() string {
 		out[i] = base36[int(b)%36]
 	}
 	return "app_" + string(out)
-}
-
-// mintSecret generates the app secret: "msg_" + 32 bytes base64url.
-func mintSecret() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("mint secret: %w", err)
-	}
-	return "msg_" + base64.RawURLEncoding.EncodeToString(buf), nil
 }

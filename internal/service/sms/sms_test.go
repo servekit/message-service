@@ -102,7 +102,7 @@ func newSMSFixture(t *testing.T) *smsFixture {
 	t.Helper()
 	db := setupDB(t)
 	ctx := context.Background()
-	app := &models.MessageApp{ID: 111, AppKey: "sms-app", AppSecret: "s", Name: "SMS App"}
+	app := &models.MessageApp{ID: 111, AppKey: "sms-app", Name: "SMS App"}
 	require.NoError(t, dal.CreateApp(ctx, db, app))
 
 	aliyunID, tencentID, sigID := int64(2001), int64(2002), int64(3001)
@@ -123,10 +123,11 @@ func newSMSFixture(t *testing.T) *smsFixture {
 	})
 	require.NoError(t, err)
 	template := &models.MessageTemplate{
-		ID: 2101, AppID: app.ID, Name: "login-code-sms",
+		ID: 2101, Name: "login-code-sms",
 		Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
 		Kind:    int32(pb.TemplateKind_TEMPLATE_KIND_SMS_VENDOR_CODES),
 		Params:  params, Content: content,
+		TenantKey: models.TenantKeyPtr(app.AppKey),
 	}
 	require.NoError(t, dal.CreateTemplate(ctx, db, template))
 
@@ -136,12 +137,13 @@ func newSMSFixture(t *testing.T) *smsFixture {
 	})
 	require.NoError(t, err)
 	policy := &models.MessagePolicy{
-		ID: 3101, AppID: app.ID,
+		ID:         3101,
 		Channel:    int32(pb.TemplateChannel_TEMPLATE_CHANNEL_SMS),
 		Scene:      int32(pb.SmsScene_SMS_SCENE_LOGIN_CODE),
 		TemplateID: template.ID,
 		Routes:     routes,
 		IntlRoutes: routes,
+		TenantKey:  models.TenantKeyPtr(app.AppKey),
 	}
 	require.NoError(t, dal.CreatePolicy(ctx, db, policy))
 

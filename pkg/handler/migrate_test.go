@@ -42,7 +42,7 @@ func TestMigrate_TablePrefixAware(t *testing.T) {
 	// table is created by Migrate itself under the prefixed name.
 	require.NoError(t, Migrate(db), "migrate must converge a prefixed database")
 	require.NoError(t, db.Exec(fmt.Sprintf(
-		`INSERT INTO %s (id, app_key, app_secret, name, created_at, updated_at) VALUES (1, 'legacyapp', 's', 'legacy', now(), now())`,
+		`INSERT INTO %s (id, app_key, name, created_at, updated_at) VALUES (1, 'legacyapp', 'legacy', now(), now())`,
 		tableName(db, "message_apps"))).Error)
 	require.NoError(t, db.Exec(fmt.Sprintf(
 		`UPDATE %s SET tenant_key = NULL`, tableName(db, "message_apps"))).Error)
@@ -65,17 +65,20 @@ func TestMigrate_RekeysPrePhase3Database(t *testing.T) {
 	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	require.NoError(t, Migrate(db))
 
-	// rewind to the pre-③ shape
+	// rewind to the pre-③ shape (re-adding the legacy pointer columns the
+	// ④ step dropped, so the simulation is faithful)
 	for _, stmt := range []string{
 		`DROP INDEX IF EXISTS uniq_msg_policy_tenant_ch_scene`,
 		`DROP INDEX IF EXISTS uniq_msg_apps_tenant_key`,
 		`ALTER TABLE message_policies DROP COLUMN IF EXISTS tenant_key`,
 		`ALTER TABLE message_templates DROP COLUMN IF EXISTS tenant_key`,
 		`ALTER TABLE message_apps DROP COLUMN IF EXISTS tenant_key`,
+		`ALTER TABLE message_templates ADD COLUMN app_id bigint NOT NULL DEFAULT 0`,
+		`ALTER TABLE message_policies ADD COLUMN app_id bigint NOT NULL DEFAULT 0`,
 		`CREATE UNIQUE INDEX uniq_msg_policy_app_ch_scene ON message_policies (app_id, channel, scene)`,
 		// legacy rows: one app, a shared template, an owned template, a policy
-		`INSERT INTO message_apps (id, app_key, app_secret, name, disabled, sms_daily_limit, email_daily_limit)
-		   VALUES (5001, 'legacy-app', 's', 'legacy-app', false, 0, 0)`,
+		`INSERT INTO message_apps (id, app_key, name, disabled, sms_daily_limit, email_daily_limit)
+		   VALUES (5001, 'legacy-app', 'legacy-app', false, 0, 0)`,
 		`INSERT INTO message_templates (id, app_id, name, channel, kind, disabled)
 		   VALUES (8001, 0, 'shared', 1, 1, false), (8002, 5001, 'owned', 1, 1, false)`,
 		`INSERT INTO message_policies (id, app_id, channel, scene, template_id, disabled)
@@ -117,6 +120,10 @@ func TestMigrate_ReconcileAbortsOnDanglingReference(t *testing.T) {
 	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	require.NoError(t, Migrate(db))
 
+	// Re-add the legacy pointers the ④ step dropped (pre-③ simulation),
+	// then dangle a policy row off one.
+	require.NoError(t, db.Exec(`ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS app_id bigint NOT NULL DEFAULT 0`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE message_policies ADD COLUMN app_id bigint NOT NULL DEFAULT 0`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO message_policies (id, app_id, channel, scene, template_id, disabled)
 		VALUES (9900, 424242, 1, 1, 0, false)`).Error)
 

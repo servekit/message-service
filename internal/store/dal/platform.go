@@ -152,8 +152,8 @@ func ListApps(ctx context.Context, tx *gorm.DB) ([]*models.MessageApp, error) {
 	return apps, nil
 }
 
-// UpdateApp replaces the mutable app fields (name, disabled, daily limits,
-// secret). app_key is immutable.
+// UpdateApp replaces the mutable app fields (name, disabled, daily
+// limits). app_key is immutable; the credential column is gone (④).
 func UpdateApp(ctx context.Context, tx *gorm.DB, app *models.MessageApp) error {
 	_, err := gorm.G[models.MessageApp](tx).
 		Where(generated.MessageApp.ID.Eq(app.ID)).
@@ -162,7 +162,6 @@ func UpdateApp(ctx context.Context, tx *gorm.DB, app *models.MessageApp) error {
 			generated.MessageApp.Disabled.Set(app.Disabled),
 			generated.MessageApp.SMSDailyLimit.Set(app.SMSDailyLimit),
 			generated.MessageApp.EmailDailyLimit.Set(app.EmailDailyLimit),
-			generated.MessageApp.AppSecret.Set(app.AppSecret),
 		).
 		Update(ctx)
 	if err != nil {
@@ -395,13 +394,11 @@ func GetTemplate(ctx context.Context, tx *gorm.DB, id int64) (*models.MessageTem
 	return &record, nil
 }
 
-// ListTemplates filters by app (0 = all) and channel (0 = all), ordered by
-// id ascending.
-func ListTemplates(ctx context.Context, tx *gorm.DB, appID int64, channel int32) ([]*models.MessageTemplate, error) {
+// ListTemplates filters by channel (0 = all), ordered by id ascending.
+// (The legacy app_id filter went with the ④ column drop; callers filter by
+// tenant in memory — the registry Snapshot.)
+func ListTemplates(ctx context.Context, tx *gorm.DB, channel int32) ([]*models.MessageTemplate, error) {
 	q := gorm.G[models.MessageTemplate](tx).Where(generated.MessageTemplate.ID.Gt(0))
-	if appID != 0 {
-		q = q.Where(generated.MessageTemplate.AppID.Eq(appID))
-	}
 	if channel != 0 {
 		q = q.Where(generated.MessageTemplate.Channel.Eq(channel))
 	}
@@ -469,13 +466,11 @@ func GetPolicy(ctx context.Context, tx *gorm.DB, id int64) (*models.MessagePolic
 	return &record, nil
 }
 
-// ListPolicies filters by app (0 = all) and channel (0 = all), ordered by
-// id ascending.
-func ListPolicies(ctx context.Context, tx *gorm.DB, appID int64, channel int32) ([]*models.MessagePolicy, error) {
+// ListPolicies filters by channel (0 = all), ordered by id ascending.
+// (The legacy app_id filter went with the ④ column drop; callers filter by
+// tenant in memory — the registry Snapshot.)
+func ListPolicies(ctx context.Context, tx *gorm.DB, channel int32) ([]*models.MessagePolicy, error) {
 	q := gorm.G[models.MessagePolicy](tx).Where(generated.MessagePolicy.ID.Gt(0))
-	if appID != 0 {
-		q = q.Where(generated.MessagePolicy.AppID.Eq(appID))
-	}
 	if channel != 0 {
 		q = q.Where(generated.MessagePolicy.Channel.Eq(channel))
 	}

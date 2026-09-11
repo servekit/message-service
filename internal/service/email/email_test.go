@@ -104,7 +104,7 @@ type fixture struct {
 func newFixture(t *testing.T, providers ...*mockEmailProvider) *fixture {
 	t.Helper()
 	db := setupDB(t)
-	app := &models.MessageApp{ID: 101, AppKey: "test-app", AppSecret: "secret", Name: "Test App"}
+	app := &models.MessageApp{ID: 101, AppKey: "test-app", Name: "Test App"}
 	require.NoError(t, dal.CreateApp(context.Background(), db, app))
 
 	// email channel accounts — config JSON is opaque to the mocked builder
@@ -130,10 +130,11 @@ func newFixture(t *testing.T, providers ...*mockEmailProvider) *fixture {
 	})
 	require.NoError(t, err)
 	template := &models.MessageTemplate{
-		ID: 201, AppID: app.ID, Name: "login-code-email",
+		ID: 201, Name: "login-code-email",
 		Channel: int32(pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL),
 		Kind:    int32(pb.TemplateKind_TEMPLATE_KIND_EMAIL_RENDER),
 		Params:  params, Content: content,
+		TenantKey: models.TenantKeyPtr(app.AppKey),
 	}
 	require.NoError(t, dal.CreateTemplate(context.Background(), db, template))
 
@@ -144,11 +145,12 @@ func newFixture(t *testing.T, providers ...*mockEmailProvider) *fixture {
 	routesJSON, err := send.MarshalRoutes(routes)
 	require.NoError(t, err)
 	policy := &models.MessagePolicy{
-		ID: 301, AppID: app.ID,
+		ID:         301,
 		Channel:    int32(pb.TemplateChannel_TEMPLATE_CHANNEL_EMAIL),
 		Scene:      int32(pb.EmailScene_EMAIL_SCENE_LOGIN_CODE),
 		TemplateID: template.ID,
 		Routes:     routesJSON,
+		TenantKey:  models.TenantKeyPtr(app.AppKey),
 	}
 	require.NoError(t, dal.CreatePolicy(context.Background(), db, policy))
 

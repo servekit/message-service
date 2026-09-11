@@ -16,8 +16,6 @@ package tenantres
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 
@@ -74,9 +72,9 @@ func (r *Resolver) Require(ctx context.Context) (*Caller, error) {
 // ensureTrusted resolves the tenant's config row through the snapshot; on a
 // miss it falls back to the DB (covers rows written by other nodes and
 // un-backfilled app_key-equal rows) and finally lazily creates the default
-// config row. The minted secret satisfies the not-null column without being
-// handed to anyone — trusted callers authenticate by network position, never
-// by secret. A disabled config row fails closed.
+// config row. Trusted callers authenticate by network position, never by a
+// secret (the credential column is gone, spec §9.1.3). A disabled config
+// row fails closed.
 func (r *Resolver) ensureTrusted(ctx context.Context, tenantKey string) (*Caller, error) {
 	if app := r.reg.Current().AppByTenant(tenantKey); app != nil {
 		if app.Disabled {
@@ -90,14 +88,9 @@ func (r *Resolver) ensureTrusted(ctx context.Context, tenantKey string) (*Caller
 		return nil, err
 	}
 	if app == nil {
-		secret, mintErr := mintTenantSecret()
-		if mintErr != nil {
-			return nil, xcodes.ErrInternal.Wrap(mintErr)
-		}
 		if err := dal.EnsureTenantApp(ctx, r.db, &models.MessageApp{
 			AppKey:    tenantKey,
 			TenantKey: models.TenantKeyPtr(tenantKey),
-			AppSecret: secret,
 			Name:      tenantKey,
 			// daily limits default 0 = unlimited (recipe step 4)
 		}); err != nil {
@@ -121,15 +114,4 @@ func (r *Resolver) ensureTrusted(ctx context.Context, tenantKey string) (*Caller
 		return nil, xcodes.ErrAppUnauthorized.New(fmt.Sprintf("unknown or disabled app %q", tenantKey))
 	}
 	return &Caller{TenantKey: tenantKey, App: app}, nil
-}
-
-// mintTenantSecret mints "msg_" + 32 random bytes (base64url) — same shape
-// as admin-minted app secrets; never handed to anyone (trusted callers
-// authenticate by network position).
-func mintTenantSecret() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("mint tenant secret: %w", err)
-	}
-	return "msg_" + base64.RawURLEncoding.EncodeToString(buf), nil
 }

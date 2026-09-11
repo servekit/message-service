@@ -139,7 +139,7 @@ func TestSendSMSLegacyRejected(t *testing.T) {
 	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	require.NoError(t, db.AutoMigrate(models.AllModels()...))
 	require.NoError(t, dal.CreateApp(context.Background(), db, &models.MessageApp{
-		ID: 9401, AppKey: "e2e-legacy", AppSecret: "e2e-secret", Name: "legacy",
+		ID: 9401, AppKey: "e2e-legacy", Name: "legacy",
 		TenantKey: models.TenantKeyPtr("ten_e2elegacy000"),
 	}))
 	seedPolicyFor(t, db, "ten_e2elegacy000")
@@ -170,7 +170,7 @@ func TestSendSMSTrustedBeatsSmuggledLegacy(t *testing.T) {
 	db := dbx.SetupTestDB(t, dbx.DriverPostgres)
 	require.NoError(t, db.AutoMigrate(models.AllModels()...))
 	require.NoError(t, dal.CreateApp(context.Background(), db, &models.MessageApp{
-		ID: 9402, AppKey: "e2e-other", AppSecret: "other-secret", Name: "other",
+		ID: 9402, AppKey: "e2e-other", Name: "other",
 		TenantKey: models.TenantKeyPtr("ten_e2eother0000"),
 	}))
 	seedPolicyFor(t, db, "ten_e2etrusted00")

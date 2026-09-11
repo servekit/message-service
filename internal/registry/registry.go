@@ -127,11 +127,16 @@ func (s *Snapshot) Template(id int64) *models.MessageTemplate {
 }
 
 // Templates lists templates filtered by appID (0 = all) and channel (0 =
-// all), ordered by id.
+// all), ordered by id. appID names a tenant-config row; the filter is
+// resolved through its tenant (the template rows carry tenant_key — the
+// legacy app_id column was dropped with the ④ window close). Shared
+// templates (tenant_key NULL) stay visible under every app filter, matching
+// the former AppID=0 semantics.
 func (s *Snapshot) Templates(appID int64, channel int32) []*models.MessageTemplate {
+	tenant := s.tenantOfApp(appID)
 	var out []*models.MessageTemplate
 	for _, t := range s.templates {
-		if appID != 0 && t.AppID != appID && t.AppID != 0 {
+		if appID != 0 && t.TenantKey != nil && models.TenantKeyOf(t.TenantKey) != tenant {
 			continue
 		}
 		if channel != 0 && t.Channel != channel {
@@ -143,6 +148,31 @@ func (s *Snapshot) Templates(appID int64, channel int32) []*models.MessageTempla
 	return out
 }
 
+// tenantOfApp resolves a tenant-config row id to its tenant key ("" for the
+// shared/unknown id — the id 0 sentinel).
+func (s *Snapshot) tenantOfApp(appID int64) string {
+	if appID == 0 {
+		return ""
+	}
+	if app := s.AppByID(appID); app != nil {
+		return models.AppTenantKey(app)
+	}
+	return ""
+}
+
+// AppIDForTenant reverse-resolves a tenant key to its tenant-config row id
+// (0 when no config row maps to the tenant) — the wire still names rows by
+// id, so admin echoes translate the stored tenant back to the row id.
+func (s *Snapshot) AppIDForTenant(tenantKey string) int64 {
+	if tenantKey == "" {
+		return 0
+	}
+	if app := s.tenants[tenantKey]; app != nil {
+		return app.ID
+	}
+	return 0
+}
+
 // Policy resolves the send policy for (tenant, channel, scene); nil when not
 // configured or disabled. channel/scene are TemplateChannel /
 // EmailScene|SmsScene enum int32 values.
@@ -151,11 +181,14 @@ func (s *Snapshot) Policy(tenantKey string, channel, scene int32) *models.Messag
 }
 
 // Policies lists policies filtered by appID (0 = all) and channel (0 =
-// all), ordered by id. Admin-surface filter — the send path uses Policy.
+// all), ordered by id. appID names a tenant-config row; the filter matches
+// the policy's resolved tenant (the legacy app_id column was dropped with
+// the ④ window close). Admin-surface filter — the send path uses Policy.
 func (s *Snapshot) Policies(appID int64, channel int32) []*models.MessagePolicy {
+	tenant := s.tenantOfApp(appID)
 	var out []*models.MessagePolicy
 	for _, p := range s.policies {
-		if appID != 0 && p.AppID != appID {
+		if appID != 0 && s.policyTenant[p.ID] != tenant {
 			continue
 		}
 		if channel != 0 && p.Channel != channel {
@@ -261,11 +294,11 @@ func (r *Registry) Refresh(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("registry: load signature bindings: %w", err)
 	}
-	templates, err := dal.ListTemplates(ctx, r.db, 0, 0)
+	templates, err := dal.ListTemplates(ctx, r.db, 0)
 	if err != nil {
 		return fmt.Errorf("registry: load templates: %w", err)
 	}
-	policies, err := dal.ListPolicies(ctx, r.db, 0, 0)
+	policies, err := dal.ListPolicies(ctx, r.db, 0)
 	if err != nil {
 		return fmt.Errorf("registry: load policies: %w", err)
 	}
@@ -282,10 +315,8 @@ func (r *Registry) Refresh(ctx context.Context) error {
 		smsProviders:   make(map[int64]provesms.AccountProvider, len(accounts)),
 		emailProviders: make(map[int64]provemail.AccountProvider, len(accounts)),
 	}
-	appsByID := make(map[int64]*models.MessageApp, len(apps))
 	for _, a := range apps {
 		snap.apps[a.AppKey] = a
-		appsByID[a.ID] = a
 		if tenant := models.AppTenantKey(a); tenant != "" {
 			if _, dup := snap.tenants[tenant]; dup {
 				slog.Error("registry: duplicate tenant mapping (keeping first)", "tenant", tenant, "app", a.AppKey)
@@ -334,18 +365,14 @@ func (r *Registry) Refresh(ctx context.Context) error {
 		if p.Disabled {
 			continue
 		}
-		// Resolve the policy's tenant: the backfilled column, else the app
-		// mapping (pre-③ rows written during the deploy window). A policy
-		// with no resolvable tenant is unreachable from any caller — skip
-		// it loudly rather than silently keying it under "".
+		// Resolve the policy's tenant from its tenant_key column (the ③
+		// migration backfill left no NULLs; the legacy app_id pointer was
+		// dropped with the ④ window close). A policy with no resolvable
+		// tenant is unreachable from any caller — skip it loudly rather
+		// than silently keying it under "".
 		tenant := models.TenantKeyOf(p.TenantKey)
 		if tenant == "" {
-			if app := appsByID[p.AppID]; app != nil {
-				tenant = models.AppTenantKey(app)
-			}
-		}
-		if tenant == "" {
-			slog.Error("registry: skip policy with unresolvable tenant", "policy_id", p.ID, "app_id", p.AppID)
+			slog.Error("registry: skip policy with unresolvable tenant", "policy_id", p.ID)
 			continue
 		}
 		snap.policies[policyKey(tenant, p.Channel, p.Scene)] = p
