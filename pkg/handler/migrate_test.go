@@ -1,7 +1,12 @@
 package handler
 
 import (
+	"fmt"
 	"testing"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 
 	"github.com/servekit/go-common/dbx"
 
@@ -16,6 +21,39 @@ func TestMigrate_Idempotent(t *testing.T) {
 	require.NoError(t, Migrate(db))
 	require.NoError(t, Migrate(db),
 		"re-running migrate on a clean DB must not error")
+}
+
+// TestMigrate_TablePrefixAware (T7 unified postMigrate fix): a database
+// opened with a dbx TablePrefix must converge identically to a bare one —
+// the post-migrate raw SQL resolves physical table names (and the
+// pg_indexes tablename probe) through the naming strategy. Pre-fix, every
+// backfill hit "relation does not exist" on a prefixed database.
+func TestMigrate_TablePrefixAware(t *testing.T) {
+	base := dbx.SetupTestDB(t, dbx.DriverPostgres)
+	sqlDB, err := base.DB()
+	require.NoError(t, err)
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+		NamingStrategy:                           &schema.NamingStrategy{TablePrefix: "svc_"},
+	})
+	require.NoError(t, err)
+
+	// A pre-③ apps row so the backfill has something to converge; the
+	// table is created by Migrate itself under the prefixed name.
+	require.NoError(t, Migrate(db), "migrate must converge a prefixed database")
+	require.NoError(t, db.Exec(fmt.Sprintf(
+		`INSERT INTO %s (id, app_key, app_secret, name, created_at, updated_at) VALUES (1, 'legacyapp', 's', 'legacy', now(), now())`,
+		tableName(db, "message_apps"))).Error)
+	require.NoError(t, db.Exec(fmt.Sprintf(
+		`UPDATE %s SET tenant_key = NULL`, tableName(db, "message_apps"))).Error)
+
+	require.NoError(t, Migrate(db), "backfill run on the prefixed database")
+
+	var key *string
+	require.NoError(t, db.Raw(fmt.Sprintf(
+		`SELECT tenant_key FROM %s WHERE app_key = 'legacyapp'`, tableName(db, "message_apps"))).Scan(&key).Error)
+	require.NotNil(t, key, "backfill must fill tenant_key on the prefixed table")
+	require.Equal(t, "legacyapp", *key)
 }
 
 // TestMigrate_RekeysPrePhase3Database simulates a pre-③ database (no

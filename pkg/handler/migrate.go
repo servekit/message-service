@@ -10,6 +10,17 @@ import (
 	"github.com/servekit/message-service/internal/store/models"
 )
 
+// tableName resolves the physical table name for a logical (unprefixed)
+// table on db, prefix-aware: convention-named tables carry the naming
+// strategy's TablePrefix exactly as AutoMigrate creates them (message's
+// models have no custom TableName() overrides). The post-migrate raw SQL
+// must go through this so a prefixed database (dbx TablePrefix) converges
+// identically to a bare one — the bare-name pattern this replaces had
+// recurred in every migrate mirror.
+func tableName(db *gorm.DB, name string) string {
+	return db.NamingStrategy.TableName(name)
+}
+
 // Migrate applies the current schema to db via GORM AutoMigrate, then runs
 // the phase ③ tenant_key post-migration (backfill + reconcile + guarded
 // drop — the same procedure as deploy/phase3-message-tenant-key.sql, so
@@ -57,32 +68,37 @@ func postMigrateTenantKey(db *gorm.DB) error {
 		return nil
 	}
 
+	apps := tableName(db, "message_apps")
+	templates := tableName(db, "message_templates")
+	policies := tableName(db, "message_policies")
+
 	// Backfill (idempotent: NULL rows only).
-	if err := db.Exec(`UPDATE message_apps SET tenant_key = app_key WHERE tenant_key IS NULL`).Error; err != nil {
+	if err := db.Exec(fmt.Sprintf(
+		`UPDATE %s SET tenant_key = app_key WHERE tenant_key IS NULL`, apps)).Error; err != nil {
 		return fmt.Errorf("backfill message_apps: %w", err)
 	}
-	if err := db.Exec(`UPDATE message_templates t SET tenant_key = a.tenant_key
-		FROM message_apps a
-		WHERE t.app_id = a.id AND t.app_id <> 0 AND t.tenant_key IS NULL`).Error; err != nil {
+	if err := db.Exec(fmt.Sprintf(`UPDATE %s t SET tenant_key = a.tenant_key
+		FROM %s a
+		WHERE t.app_id = a.id AND t.app_id <> 0 AND t.tenant_key IS NULL`, templates, apps)).Error; err != nil {
 		return fmt.Errorf("backfill message_templates: %w", err)
 	}
-	if err := db.Exec(`UPDATE message_policies p SET tenant_key = a.tenant_key
-		FROM message_apps a
-		WHERE p.app_id = a.id AND p.tenant_key IS NULL`).Error; err != nil {
+	if err := db.Exec(fmt.Sprintf(`UPDATE %s p SET tenant_key = a.tenant_key
+		FROM %s a
+		WHERE p.app_id = a.id AND p.tenant_key IS NULL`, policies, apps)).Error; err != nil {
 		return fmt.Errorf("backfill message_policies: %w", err)
 	}
 
 	// Reconcile: every row that must carry a tenant_key does.
 	if err := reconcileTenantKey(db, "message_apps",
-		`SELECT count(*), count(tenant_key) FROM message_apps`); err != nil {
+		fmt.Sprintf(`SELECT count(*), count(tenant_key) FROM %s`, apps)); err != nil {
 		return err
 	}
 	if err := reconcileTenantKey(db, "message_templates",
-		`SELECT count(*) FILTER (WHERE app_id <> 0), count(tenant_key) FILTER (WHERE app_id <> 0) FROM message_templates`); err != nil {
+		fmt.Sprintf(`SELECT count(*) FILTER (WHERE app_id <> 0), count(tenant_key) FILTER (WHERE app_id <> 0) FROM %s`, templates)); err != nil {
 		return err
 	}
 	if err := reconcileTenantKey(db, "message_policies",
-		`SELECT count(*), count(tenant_key) FROM message_policies`); err != nil {
+		fmt.Sprintf(`SELECT count(*), count(tenant_key) FROM %s`, policies)); err != nil {
 		return err
 	}
 
@@ -90,7 +106,7 @@ func postMigrateTenantKey(db *gorm.DB) error {
 	// index exists — AutoMigrate created it from the model tags).
 	var hasNew int64
 	if err := db.Raw(`SELECT count(*) FROM pg_indexes
-		WHERE tablename = 'message_policies' AND indexname = 'uniq_msg_policy_tenant_ch_scene'`).
+		WHERE tablename = ? AND indexname = 'uniq_msg_policy_tenant_ch_scene'`, policies).
 		Scan(&hasNew).Error; err != nil {
 		return fmt.Errorf("check replacement index: %w", err)
 	}
